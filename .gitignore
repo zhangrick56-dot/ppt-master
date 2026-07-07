@@ -146,6 +146,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.codex_local_deps/
 
 # Node.js (if you add Node.js tools later)
 node_modules/
