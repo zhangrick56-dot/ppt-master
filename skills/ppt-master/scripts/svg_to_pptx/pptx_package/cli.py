@@ -110,17 +110,20 @@ Transition effects (-t/--transition):
 Per-element entrance animation (-a/--animation, native shapes mode):
     {', '.join(animation_choices)}
     Notes: applied to top-level <g id="..."> SVG groups in z-order. Default is
-           "auto" (map effect from group id: chart→wipe, card-/step-/pillar-→fly,
-           title/takeaway→fade; image-like ids hero/figure-/image/img-/kpi cycle
-           zoom/dissolve/circle/box/diamond/wheel so multiple images vary across
-           the deck; unmatched ids cycle fade/wipe/fly/zoom). Start mode set by
-           --animation-trigger, matching PowerPoint's Start dropdown:
+           "none" (no auto element builds; page transitions still apply). Use
+           "-a auto" to map effects from group id: chart→wipe,
+           card-/step-/pillar-→fly, title/takeaway→fade; image-like ids
+           hero/figure-/image/img-/kpi cycle zoom/dissolve/circle/box/diamond/
+           wheel so multiple images vary across the deck; unmatched ids cycle
+           fade/wipe/fly/zoom. Start mode set by --animation-trigger, matching
+           PowerPoint's Start dropdown:
              on-click              one presenter click per group
              with-previous         all groups start together on slide entry
              after-previous (default)  cascade on slide entry;
                                        gap = --animation-stagger seconds
            mixed (legacy) cycles a larger 16-effect pool by group order;
-           random samples from the same legacy pool. Use "-a none" to disable.
+           random samples from the same legacy pool. Use "-a none" to disable
+           element builds explicitly.
 
 Compatibility mode (enabled by default):
     - Automatically generates PNG fallback images, SVG embedded as extension
@@ -255,11 +258,14 @@ Recorded narration:
     parser.add_argument('--no-notes', action='store_true',
                         help='Disable speaker notes embedding (enabled by default)')
     parser.add_argument('--narration-audio-dir', type=str, default=None,
-                        help='Low-level audio embedding from this directory; allows partial matches')
+                        help='Low-level audio embedding from this directory; allows partial matches. '
+                             'Default-flow exports get the _narrated name suffix.')
     parser.add_argument('--use-narration-timings', action='store_true',
                         help='Set slide auto-advance timings from narration audio durations')
     parser.add_argument('--recorded-narration', type=str, default=None,
-                        help='Prepare PowerPoint recorded timings and narrations from a complete audio directory')
+                        help='Prepare PowerPoint recorded timings and narrations from a complete audio '
+                             'directory. Default-flow exports get the _narrated name suffix '
+                             '(<project>_<ts>_narrated.pptx) to tell them apart from silent exports.')
     parser.add_argument('--narration-padding', type=float, default=0.5,
                         help='Seconds to add after each narration before auto-advance (default: 0.5)')
 
@@ -361,10 +367,13 @@ Recorded narration:
         # --native-objects yields a materially different file (real editable
         # PowerPoint chart/table objects instead of flattened shapes), so mark
         # it in the default-flow name to tell it apart from a plain shape export
-        # and the _svg snapshot. Flag-driven (not content-sniffed) so the name is
-        # predictable; an explicit -o keeps the caller's exact name untouched.
+        # and the _svg snapshot. Narration flags likewise mark _narrated (audio
+        # embedded per slide + auto-advance timings); both entry points share
+        # the tag. Flag-driven (not content-sniffed) so the name is predictable;
+        # an explicit -o keeps the caller's exact name untouched.
         native_tag = "_native_charts" if args.native_objects else ""
-        native_path = exports_dir / f"{project_name}_{timestamp}{native_tag}.pptx"
+        narrated_tag = "_narrated" if (args.recorded_narration or args.narration_audio_dir) else ""
+        native_path = exports_dir / f"{project_name}_{timestamp}{native_tag}{narrated_tag}.pptx"
         # svg_output/ snapshot always goes under backup/<ts>/ in default-flow
         # mode (no -o). --svg-snapshot only controls the optional legacy
         # SVG-rendered pptx, which now sits alongside the native pptx in

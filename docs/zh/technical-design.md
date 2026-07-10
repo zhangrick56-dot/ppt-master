@@ -37,7 +37,7 @@
     ├── [Quality Check] svg_quality_checker.py（强制通过，0 错误）
     └── 讲稿生成：完整讲稿 → notes/total.md
     ↓
-[图表校准（可选）] → verify-charts 工作流（含数据图表的幻灯片在此步骤校准坐标）
+[图表校准（条件触发）] → verify-charts 工作流（含数据图表的 deck 必须在此步骤校准坐标）
     ↓
 [视觉自检（可选，opt-in）] → visual-review 工作流（仅在用户明确请求时触发）
     ↓
@@ -47,6 +47,7 @@
     exports/
     ├── presentation_<timestamp>.pptx                ← 原生形状版（DrawingML）— 唯一标准产物，编辑/交付从这里走
     ├── presentation_<timestamp>_native_charts.pptx  ← 原生图表/表格对象版（而非压平形状，加 --native-objects 时生成）
+    ├── presentation_<timestamp>_narrated.pptx        ← 旁白版 — 逐页嵌入音频并写入自动推进时间（加 --recorded-narration audio 时生成）
     └── presentation_<timestamp>_svg.pptx            ← SVG 快照版 pptx — 像素级视觉参考（加 --svg-snapshot 时生成）
 
     # 默认流程（未指定 -o）始终写入
@@ -100,7 +101,7 @@
 Executor 角色逐页生成演示文稿的视觉内容，输出为 SVG 文件。这个阶段的产物是**设计稿**，而非成品。
 
 **第三阶段：工程化转换**
-后处理脚本将 SVG 转换为 DrawingML，每一个形状都变成真正的 PowerPoint 原生对象——可点击、可编辑、可改色，而不是嵌入的图片。
+后处理脚本将受支持的 SVG 向量元素转换为 DrawingML。文本和向量形状会保持为 PowerPoint 原生对象——可点击、可编辑、可改样式；位图资源则复制为 PPT picture media，而不是把整页压平成一张图片。
 
 ---
 
@@ -369,9 +370,9 @@ PowerPoint 的 DrawingML 是 SVG 表达力的严格子集。Executor 在一份�
 
 > 工程化转换阶段中每一份产物和每一个模块为何存在，删除它会破坏哪些工作流。在考虑简化 `svg_final/` / `finalize_svg.py` / `svg_to_pptx.py` 之前，先读这一节。
 
-### 五份产物，五种工作流
+### 交付产物与工作流
 
-后处理阶段涉及五份产物。每一份都服务于一种流水线中无法替代的工作流。
+后处理与导出阶段涉及几类职责不同的产物。每一份都服务于一种流水线中无法替代的工作流。
 
 | 产物 | 服务的工作流 | 为何无可替代 |
 | --- | --- | --- |
@@ -379,6 +380,7 @@ PowerPoint 的 DrawingML 是 SVG 表达力的严格子集。Executor 在一份�
 | `svg_final/` | IDE 内即时预览（VSCode/Cursor 直接打开 `.svg`）、浏览器单页预览 | `.pptx` 在 IDE 里打不开；`svg_output/` 因图标 / 图片是外部引用，IDE 中渲染不完整 |
 | `exports/<name>_<ts>.pptx`（native） | 主交付物——PowerPoint 中以 DrawingML 形状形态可编辑 | 唯一一份用户可在 PowerPoint 中原生改尺寸 / 改色 / 改样式的产物 |
 | `exports/<name>_<ts>_native_charts.pptx`（需 `--native-objects` 显式开启） | 让带 `data-pptx-native` 标记的图表/表格以真·PowerPoint 原生对象交付,而非压平形状 | 带数据、可在 PowerPoint 中直接编辑的图表/表格对象;命名与普通压平形状导出区分开 |
+| `exports/<name>_<ts>_narrated.pptx`（经 `--recorded-narration audio` 生成） | 自动放映与 PowerPoint 视频导出用的旁白版 deck | 逐页嵌入音频并写入自动推进时间;命名与无声导出区分开 |
 | `exports/<name>_<ts>_svg.pptx`（preview，需 `--svg-snapshot` 显式开启） | 跨平台单文件分发、整体多页浏览、邮件附件 | 自包含、多页、PowerPoint / Keynote / WPS / LibreOffice 都能直接打开；`svg_final/` 是文件夹，分发不便。默认关闭——live preview 已经覆盖 dev / 诊断场景的 SVG 视觉参考需求 |
 | `backup/<ts>/svg_output/`（默认流程下始终生成） | 不重跑 LLM 的前提下从冻结 SVG 源重建 pptx、长期存档 | 项目下游被改动后，Executor 原始 SVG 唯一的留存副本 |
 
@@ -423,7 +425,7 @@ PowerPoint 的 DrawingML 是 SVG 表达力的严格子集。Executor 在一份�
 
 **为什么是逐元素派发而不是整体翻译。** SVG 的层级模型干净地映射到 DrawingML 的 group / shape / picture 类型——不需要一个全局优化器去重新规划幻灯片。每种形状都有自己窄的翻译器，简单到能单独调试和单元测试。一张幻灯片的最终质量等于这些独立局部转换之和；这个性质在整体翻译下脆弱，在元素派发下稳健。
 
-**为什么 Office 兼容模式默认开启。** 2019 之前的 PowerPoint 不能原生渲染 SVG。转换器为每页生成 PNG 兜底，与原生形状并存——新版 Office 仍显示可编辑形状，旧版回退到 PNG。默认开启的取舍是：用适度的文件大小代价换取「不会静默地把打不开的 deck 交给跑老版本的用户」；逃生口给那些明确知道自己在新栈上、想要更小文件的用户。
+**为什么兼容 fallback 属于 SVG snapshot 路径，而不是 native shapes。** Native PPTX 导出会把受支持的 SVG 元素翻译成 DrawingML 形状，并在 native-shapes 模式下显式关闭 PNG+SVG 兼容模式。PNG fallback 只在 legacy SVG-image 路径（`--svg-snapshot` / `--only legacy`）且本地 renderer 可用时使用，因为那条路径嵌入的是旧版 Office 可能无法显示的 SVG media。因此，旧版兼容是一份可选 snapshot 交付物，不是捆在主 editable native deck 里的兜底层。
 
 ---
 
