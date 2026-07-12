@@ -77,11 +77,13 @@ python3 skills/ppt-master/scripts/update_repo.py
 
 ## Q: 生成的 PPT 可以编辑吗？
 
-可以。主 `.pptx`（原生 PowerPoint 形状，文字、图形、颜色均可直接编辑，无需转换）以时间戳命名保存至 `exports/`。Executor 的原始 SVG 源（`svg_output/` 副本）始终镜像到 `backup/<timestamp>/svg_output/`，便于归档或基于该版重跑 `finalize_svg → svg_to_pptx` 重建 pptx，无需再走 LLM。加 `--svg-snapshot` 会额外在 `exports/` 内并排生成 SVG 快照版 pptx，便于跨平台单文件分发；默认关闭——日常开发/诊断场景中 live preview 已经提供了 SVG 视觉参考。需要 **Office 2016** 或更高版本。
+可以。唯一受支持的 PPTX 产物路线，是由项目转换器读取 `svg_output/` 并生成原生 DrawingML `.pptx`；文字、图形和颜色无需额外转换即可编辑，文件以时间戳命名保存至 `exports/`。Executor 的原始 SVG 源（`svg_output/` 副本）始终镜像到 `backup/<timestamp>/svg_output/`，便于归档或基于该版重跑 `finalize_svg → svg_to_pptx` 重建 PPTX，无需再走 LLM。
+
+Step 7 仍会强制生成 `svg_final/`。其中每页都是自包含的视觉预览 SVG，可直接在浏览器或 IDE 中打开，也可作为 SVG 图片手动插入 PowerPoint；项目只保证其作为预览或图片显示，不保证 PowerPoint 手工“转换为形状”后的结果。需要可编辑形状时，请使用 `exports/` 中由项目转换器生成的原生 PPTX。
 
 ## Q: 为什么一段正文被拆成了好几个文本框？能不能一段一个文本框？
 
-默认会把可合并的正文段落导出成一个可编辑的 PowerPoint 文本框，内部保留多个段落。**拉伸框时文字会在框内自动重排**。
+默认会把可合并的正文导出成一个可编辑的 PowerPoint 文本框。SVG 中已经排好的视觉行会在框内保留为硬换行；较大行距和列表项保留为独立段落。只有显式标记 `data-pptx-break="soft"` 的文字才会在导出时拼接视觉行——Executor 绘制页面时会给连续叙述的正文段默认写上该标记，因此普通段落编辑时按整段自然回流；而标题、诗行、对齐标签这类有意设计的断行仍保留为硬换行。文本框仍保留 PowerPoint 的正常自动换行，因此删除硬换行或修改文字后，会按文本框宽度重新排版。
 
 如果你需要严格保持逐行版式，重新导出时加上 `--no-merge`：
 
@@ -91,7 +93,7 @@ python3 skills/ppt-master/scripts/svg_to_pptx.py <project_path> --no-merge
 
 使用 `--no-merge` 时，SVG 里的每一视觉行都会变成一个独立的 PowerPoint 文本框。这样能**逐像素保留 SVG 的版式**，适合封面、图表、表格、以及任何对版式精度敏感的页面。
 
-**代价**：默认段落合并后，PowerPoint 自动换行的行数可能与原 SVG 不一致。默认更适合正文密集型页面（abstract、多段落章节、参考文献等）；版式敏感页面使用 `--no-merge`。判定足够保守——非段落型 `<text>` 会自动落回按行拆框路径。
+**代价**：默认合并会保留一个可编辑文本框和原始视觉行边界；只有需要让每一视觉行都能单独移动时才使用 `--no-merge`。判定足够保守——非段落型 `<text>` 会自动落回按行拆框路径。
 
 跟 AI 对话时也可以直接说："这个页面要严格保持逐行版式" —— AI 重新导出时会加上 `--no-merge`。
 
@@ -242,7 +244,7 @@ beautify 和主管线的一句话判别：**原来的分页是要保留的信息
 
 **第一步 — 准备参考材料**
 
-**最推荐的方式是直接给原始 `.pptx` 文件**。当前的 PPTX 导入管线能做到接近高保真还原——PPT Master 会从 PPTX 中提取主题色、字体、母版/版式结构、可复用图片资源（包括精灵图裁剪关系），再用这些素材重建出干净可维护的模板。封面、章节、装饰繁复的页面都能稳定还原，这是目前最靠谱的派生路径。
+**最推荐的方式是直接给原始 `.pptx` 文件**。PPT Master 会提取主题色、字体、全部 Master/Layout、placeholder type/idx 和可复用图片资源，再重建一个干净 Master 与语义 Layout，输出完整且显式分层的 SVG。使用该模板生成新 deck 时，`adaptive` 可在同一 Master 下创建新 Layout，`strict` 保持所选 Layout 契约不变；两者都从 SVG 确定性还原原生结构。
 
 没有源 PPTX 时，截图集也能跑（`cover.png` / `toc.png` / `chapter.png` / `content.png` / `closing.png`），但保真度会明显下降。建议优先找原始 PPTX。
 
@@ -254,12 +256,13 @@ beautify 和主管线的一句话判别：**原来的分页是要保留的信息
 - 期望的风格基调和配色（如"现代克制、深蓝主色调"）
 - 类别偏好（`brand` 品牌 / `general` 通用 / `scenario` 场景 / `government` 政务 / `special` 特殊）
 - 画布格式（默认 16:9，如需其他格式请注明）
+- 输出范围：进入索引的 `library`（默认）或一个已经初始化的 `project`
 
-不需要一次提供所有细节——AI 代理会通过对话追问补齐缺失信息（模板 ID、主题模式等）。
+不需要一次提供所有细节——AI 代理会通过对话追问补齐缺失信息（输出范围、模板 ID、主题模式等）。
 
 **第三步 — 等待完成**
 
-AI 代理会自动完成后续工作 — 分析截图、构建布局定义、注册模板，使其出现在 PPT Master 工作流的模板选项中。
+AI 代理会自动完成后续工作——分析截图、构建布局定义并验证模板。`library` 范围会完成全局注册，使其进入模板发现；`project` 范围则把薄模板直接写入该项目的 `templates/` 根目录，并明确跳过全局注册。
 
 > **提示**：对风格和使用场景描述得越具体，生成的模板就越符合你的预期。
 

@@ -8,13 +8,17 @@
 
 ## 一、三分类
 
-| 分类 | 物理目录 | 写什么 | 不写什么 | 出处工作流 |
+| 分类 | 全局库范围目录 | 写什么 | 不写什么 | 出处工作流 |
 |---|---|---|---|---|
 | **Brand** | `templates/brands/<id>/` | 仅身份段：color / typography / logo / voice / icon style | 不写 canvas、page structure、SVG roster | `workflows/create-brand.md` |
 | **Layout** | `templates/layouts/<id>/` | 仅结构段：canvas / page structure / page types / SVG roster | 不写品牌身份（无 logo、无品牌色硬约束） | `workflows/create-template.md`（layout 分支）|
 | **Deck** | `templates/decks/<id>/` | 全段：身份段 + 结构段 + 中间段（template overview） | —— | `workflows/create-template.md`（deck 分支，默认）|
 
-三者是**三种并列的 reference bundle**，物理目录与 frontmatter `kind` 字段双向对齐：
+Layout/Deck 的每张 SVG 都是完整预览，同时显式声明 `data-pptx-layout`、Master/Layout 层和语义 placeholder。这些专用标记具有最高优先级；最小 `data-pptx-role` 只补充它们无法表达的页面框架行为，普通内容不会被重复分类到 metadata 词表。PPTX 导入产生的 `native_structure.json` 与 `source_template.pptx` 只用于分析源结构，不进入新模板包。模板负责指导生成完整的页面 SVG；导出时不得再回读模板，向生成 SVG 叠加其中缺失的可见内容。下游 `strict` 保持所选 Layout 契约，`adaptive` 可在同一 Master 下创建新 Layout；两者都使用 `pptx_structure.mode: template`。旧 `preserve` 契约仅保留兼容读取。
+
+三者是**三种并列的 reference bundle**。在全局库范围内，物理目录与 frontmatter `kind` 字段双向对齐：
+
+多路径合成后的项目级 `design_spec.md` 也必须保留准确的 `kind`：同时具备身份段和结构段时为 `deck`，只有结构段时为 `layout`，只有身份段时为 `brand`。Strategist 确认页据此只对真正包含页面结构的 Deck/Layout 显示 `adaptive / strict`。
 
 ```yaml
 # templates/brands/anthropic/design_spec.md
@@ -26,15 +30,30 @@ kind: brand
 # templates/layouts/academic_defense/design_spec.md
 ---
 kind: layout
+native_structure_mode: template
 ...
 ---
 
 # templates/decks/招商银行/design_spec.md
 ---
 kind: deck
+native_structure_mode: template
 ...
 ---
 ```
+
+### 输出范围与 kind 相互独立
+
+`create-template` 会确认 Layout/Deck 契约归属于哪里。这个执行选择不会增加第四种 kind，也不会增加新的 PPTX 结构模式：
+
+| 范围 | 最终位置 | 素材分流 | 发现行为 |
+|---|---|---|---|
+| `library`（默认） | `skills/ppt-master/templates/<kind>/<id>/` | 自包含 package，包括 package 内位图和 `icons/` | 写入对应全局索引 |
+| `project` | 直接写 `<target_project>/templates/` 根目录，禁止再套 `<id>/` | spec / SVG / 非位图 package 资产在 `templates/`；位图在 `images/`，SVG 用 `../images/<name>`；提取图标同时复制到 `templates/icons/` 与运行期 `icons/` | 不更新全局索引与库 README |
+
+项目范围仍在可移植 frontmatter 中保留 `kind: layout` 或 `kind: deck`。`output_scope` 与 `target_project` 只属于工作流简报，不写入 `design_spec.md`。
+
+项目范围第一次写最终文件前，必须一次性确认目标项目已初始化、`templates/` 根目录为空，并检查全部计划写入的图片/图标文件名无冲突。任一失败都在写入前停止，不合并、不覆盖。
 
 ### 三段的字段切分
 
@@ -92,6 +111,7 @@ primary_color: "<HEX>"
 ---
 layout_id: <slug>
 kind: layout
+native_structure_mode: template
 summary: <一句话描述用途>
 canvas_format: <ppt169 | ppt43 | a4 | ...>
 page_count: <N>
@@ -119,6 +139,7 @@ page_types: [<cover, toc, chapter, content, ending, ...>]
 ---
 deck_id: <slug>
 kind: deck
+native_structure_mode: template
 summary: <一句话描述用途>
 canvas_format: <ppt169 | ...>
 page_count: <N>
@@ -148,6 +169,8 @@ primary_color: "<HEX>"
 ## 三、三套 index 文件
 
 每个 index 跟物理目录一一对应，字段按需精简（参照 [[project-charts-index-full-read-intentional]] 的"meta + summary"模式，但保留对 Strategist 选型有用的结构化元数据）。
+
+三套索引只覆盖全局库范围。项目范围模板有意不进入任何索引，仍可通过显式 `<project>/templates/` 路径使用。
 
 ### `templates/brands/brands_index.json`
 
@@ -258,7 +281,7 @@ AI: 你给了两个 brand，检测到段级冲突：
 
 ## 五、与 SKILL.md Step 3 的关系
 
-**触发规则不变** —— 仍然是「显式目录路径才触发」（见 [[feedback-template-explicit-path-only]]）。`kind` 字段决定**触发后 AI 怎么处理**：
+**触发规则仍以路径为准**——仍需显式目录路径（见 [[feedback-template-explicit-path-only]]），裸名称绝不触发。唯一的窄例外是当前对话刚完成项目范围 `create-template`：验证通过后可把精确的 `<project>/templates/` 输出直接交给 Step 3。`kind` 字段决定**触发后 AI 怎么处理**：
 
 | 用户路径指向 | Step 3 行为（按 kind 分支）|
 |---|---|
@@ -266,9 +289,9 @@ AI: 你给了两个 brand，检测到段级冲突：
 | `kind: layout` | design_spec + SVG roster → `<project>/templates/`；**位图**资产 → `<project>/images/` |
 | `kind: deck` | design_spec + 模板 SVG → `<project>/templates/`；logo / 背景 / 其它**位图** → `<project>/images/` |
 | 多路径 | 按上表合成单份 `design_spec.md`；SVG 进 `templates/`、位图进 `images/` 合并复制 |
-
-> 位图统一进项目 `images/`（和 AI / 网络 / 用户图片同一个运行期图片池，SVG 里走 `../images/`）；`templates/` 只放 spec 和模板 SVG 等供 Strategist/Executor 阅读、不被直接渲染的参考材料。
 | 同类多份 | 按上节"git 冲突解决"问答，得到合成结果 |
+
+位图统一进项目 `images/`（和 AI / 网络 / 用户图片同一个运行期图片池，SVG 里走 `../images/`）；`templates/` 只放 spec、模板 SVG 与非位图 package 资产。如果显式输入路径本来就是同一项目的 `<project>/templates/` 根目录（即 `create-template` 的项目范围产物），Step 3 原地消费：不得复制到自身，也不得再次移动 `images/` 中的素材。该原地目录是一份完整 bundle，不参与多路径融合。由于图片/图标池位于 `templates/` 的同级目录，它只归属当前项目；跨项目复用必须改用自包含的全局库范围 package。
 
 ### 策略师确认阶段在不同 kind 下的收窄
 
@@ -281,9 +304,9 @@ Deck 路径下用户已经拿到完整方案，策略师确认阶段收窄到"�
 | 工作流 | 产出 |
 |---|---|
 | `workflows/create-brand.md` | brand 目录（identity-only），从品牌资产逆向提取 |
-| `workflows/create-template.md` | layout 或 deck 目录，内部按 kind 分支：默认走 deck（用户给了一份现存 PPT，提取完整身份 + 结构）；用户明说"只要结构 / 丢掉品牌色"时走 layout |
+| `workflows/create-template.md` | layout 或 deck 契约。输出范围默认 `library`（`templates/<kind>/<id>/` + 注册），确认 `project` 时直接写 `<project>/templates/`，按项目素材规则分流且不注册。内部 kind 分支仍默认 deck；用户明说"只要结构 / 丢掉品牌色"时走 layout |
 
-产出后 frontmatter `kind` 字段决定文件落到 `templates/brands/` / `templates/layouts/` / `templates/decks/`。
+在全局库范围，frontmatter `kind` 字段决定文件落到 `templates/brands/` / `templates/layouts/` / `templates/decks/`。项目范围保留同一 kind 语义，但 Layout/Deck 直接落在项目模板根目录。
 
 ---
 
@@ -292,3 +315,4 @@ Deck 路径下用户已经拿到完整方案，策略师确认阶段收窄到"�
 - **不在 fusion 层支持字段级覆盖语法** —— 字段级微调走 策略师确认阶段这条已有路径
 - **不为同类三份及以上设计批量冲突解决** —— 用户先在 chat 里收敛到两份
 - **不引入双名映射表** —— 模板命名按其品牌/场景母语（中文模板用中文名，英文模板用 snake_case），不强制统一
+- **不新增结构模式或输出 CLI flag** —— 输出范围是 `create-template` 简报里的执行选择；两种范围的 Layout/Deck 都继续声明 `native_structure_mode: template`

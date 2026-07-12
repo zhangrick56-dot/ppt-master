@@ -901,7 +901,48 @@
         applyElementAttrs(el, sa);
     }
 
+    var INLINE_GEOMETRY_STYLE_PROPERTIES = {
+        rect: new Set(["x", "y", "width", "height", "rx", "ry"]),
+        circle: new Set(["cx", "cy", "r"]),
+        ellipse: new Set(["cx", "cy", "rx", "ry"]),
+        image: new Set(["x", "y", "width", "height"]),
+        svg: new Set(["x", "y", "width", "height"]),
+        use: new Set(["x", "y", "width", "height"])
+    };
+
+    function stripEditedInlineGeometry(el, attrs) {
+        var style = el.getAttribute("style");
+        var supported = INLINE_GEOMETRY_STYLE_PROPERTIES[localName(el)];
+        if (!style || !supported) return;
+        var edited = new Set(Object.keys(attrs || {}).map(function (key) {
+            return String(key).toLowerCase();
+        }).filter(function (key) { return supported.has(key); }));
+        if (edited.size === 0) return;
+
+        var retained = [];
+        var changed = false;
+        style.split(";").forEach(function (rawDeclaration) {
+            var declaration = rawDeclaration.trim();
+            if (!declaration) return;
+            var colon = declaration.indexOf(":");
+            if (colon < 0) {
+                retained.push(declaration);
+                return;
+            }
+            var name = declaration.slice(0, colon).trim().toLowerCase();
+            if (edited.has(name)) {
+                changed = true;
+                return;
+            }
+            retained.push(declaration);
+        });
+        if (!changed) return;
+        if (retained.length > 0) el.setAttribute("style", retained.join("; "));
+        else el.removeAttribute("style");
+    }
+
     function applyElementAttrs(el, attrs) {
+        stripEditedInlineGeometry(el, attrs);
         if (localName(el) === "g" && el.hasAttribute("data-icon") &&
                 attrs.x !== undefined && attrs.y !== undefined) {
             // The preview expands <use data-icon> into a <g>, but disk still owns
@@ -1845,6 +1886,10 @@
     function renderEditableProps(el) {
         var tag = localName(el);
         var isGroup = tag === "g";
+        var isExplicitParagraph = tag === "text" &&
+            el.getAttribute("data-pptx-text-mode") === "paragraph";
+        var paragraphOwner = explicitParagraphOwner(el);
+        var isExplicitParagraphLine = paragraphOwner && paragraphOwner !== el;
         var html = '<div class="prop-caption">' +
             escapeHtml(isGroup ? t("label_group_edit") : t("label_direct_edit")) + '</div>';
 
@@ -1856,22 +1901,26 @@
                 '</button></td></tr></table>';
         }
 
-        html += '<div class="prop-section">' + escapeHtml(t("section_geometry")) + '</div>';
-        html += '<table class="prop-table">';
-        // Geometry: position + size in render coords — editable, folded into
-        // the element's transform matrix on commit (works for any element type).
-        try {
-            var rb = computeRenderBox(el);
-            html += '<tr><td class="prop-key">position</td><td class="prop-val geo-cell">' +
-                '<input type="number" class="prop-edit prop-edit-geo" data-geo="x" value="' + Math.round(rb.x) + '">' +
-                '<input type="number" class="prop-edit prop-edit-geo" data-geo="y" value="' + Math.round(rb.y) + '">' +
-                '</td></tr>';
-            html += '<tr><td class="prop-key">size</td><td class="prop-val geo-cell">' +
-                '<input type="number" class="prop-edit prop-edit-geo" data-geo="w" min="1" value="' + Math.round(rb.w) + '">' +
-                '<input type="number" class="prop-edit prop-edit-geo" data-geo="h" min="1" value="' + Math.round(rb.h) + '">' +
-                '</td></tr>';
-        } catch (e) { /* no geometry */ }
-        html += '</table>';
+        if (!isExplicitParagraphLine) {
+            html += '<div class="prop-section">' + escapeHtml(t("section_geometry")) + '</div>';
+            html += '<table class="prop-table">';
+            // Geometry: position + size in render coords — editable, folded into
+            // the element's transform matrix on commit (works for any element type).
+            try {
+                var rb = computeRenderBox(el);
+                html += '<tr><td class="prop-key">position</td><td class="prop-val geo-cell">' +
+                    '<input type="number" class="prop-edit prop-edit-geo" data-geo="x" value="' + Math.round(rb.x) + '">' +
+                    '<input type="number" class="prop-edit prop-edit-geo" data-geo="y" value="' + Math.round(rb.y) + '">' +
+                    '</td></tr>';
+                if (!isExplicitParagraph) {
+                    html += '<tr><td class="prop-key">size</td><td class="prop-val geo-cell">' +
+                        '<input type="number" class="prop-edit prop-edit-geo" data-geo="w" min="1" value="' + Math.round(rb.w) + '">' +
+                        '<input type="number" class="prop-edit prop-edit-geo" data-geo="h" min="1" value="' + Math.round(rb.h) + '">' +
+                        '</td></tr>';
+                }
+            } catch (e) { /* no geometry */ }
+            html += '</table>';
+        }
 
         var textStyleTargets = textStyleTargetsForSelection(el);
 
@@ -1925,13 +1974,22 @@
 
     function ownAttributeSpecs(el) {
         var specs = [];
+        var paragraphOwner = explicitParagraphOwner(el);
         Array.from(el.attributes).forEach(function (attr) {
             var key = attr.name;
             if (key === "class" || key === "data-edit-target" || key === "data-edit-annotation") return;
+            var paragraphLocked = paragraphOwner && (
+                (paragraphOwner === el && [
+                    "x", "y", "transform", "data-pptx-text-bounds"
+                ].indexOf(key) !== -1) ||
+                (paragraphOwner !== el && [
+                    "x", "y", "dy", "transform"
+                ].indexOf(key) !== -1)
+            );
             specs.push({
                 key: key,
                 value: attr.value,
-                editable: isEditableAttributeName(key)
+                editable: isEditableAttributeName(key) && !paragraphLocked
             });
         });
         return specs;
@@ -2331,6 +2389,23 @@
     }
 
     function rawMoveAttrs(el, dx, dy) {
+        var paragraphOwner = explicitParagraphOwner(el);
+        if (paragraphOwner) {
+            if (paragraphOwner !== el) return null;
+            var paragraphOwn = ownMatrix(el);
+            var paragraphClose = function (a, b) { return Math.abs(a - b) < 1e-6; };
+            if (!paragraphClose(paragraphOwn.a, 1) || !paragraphClose(paragraphOwn.b, 0) ||
+                    !paragraphClose(paragraphOwn.c, 0) || !paragraphClose(paragraphOwn.d, 1)) {
+                return null;
+            }
+            var paragraphDelta = parentDelta(dx, dy, el);
+            if (!paragraphDelta) return null;
+            var tx = paragraphOwn.e + paragraphDelta.x;
+            var ty = paragraphOwn.f + paragraphDelta.y;
+            return {
+                transform: "translate(" + formatCoord(tx) + " " + formatCoord(ty) + ")"
+            };
+        }
         if (localName(el) === "g" && el.hasAttribute("data-icon") &&
                 el.hasAttribute("data-use-x") && el.hasAttribute("data-use-y")) {
             var iconOwn = ownMatrix(el);
@@ -2421,12 +2496,26 @@
     }
 
     function attrsForMove(el, dx, dy) {
+        var paragraphOwner = explicitParagraphOwner(el);
+        if (paragraphOwner && paragraphOwner !== el) return null;
         var attrs = rawMoveAttrs(el, dx, dy);
         if (attrs) return attrs;
         var rb = computeRenderBox(el);
         var moved = matrixAfterMove(el, rb, rb.x + dx, rb.y + dy);
         var tstr = matrixToString(moved);
         return tstr ? { transform: tstr } : null;
+    }
+
+    function explicitParagraphOwner(el) {
+        var candidate = el;
+        while (candidate && candidate !== svgContent) {
+            if (localName(candidate) === "text" &&
+                    candidate.getAttribute("data-pptx-text-mode") === "paragraph") {
+                return candidate;
+            }
+            candidate = candidate.parentElement;
+        }
+        return null;
     }
 
     function computeElementsBox(elements) {
@@ -2620,7 +2709,7 @@
         var attrs = {};
         attrs[key] = value;
         stageEditRequest(eid, { attrs: attrs })
-            .then(function () { el.setAttribute(key, value); })
+            .then(function () { applyElementAttrs(el, attrs); })
             .catch(function (err) { showError(t("err_edit") + err.message); });
     }
 
@@ -2856,7 +2945,7 @@
             var attrs = {};
             attrs[key] = value;
             return stageEditRequest(el.id, { attrs: attrs }).then(function () {
-                el.setAttribute(key, value);
+                applyElementAttrs(el, attrs);
             });
         });
         Promise.all(jobs)

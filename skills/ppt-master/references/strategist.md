@@ -20,7 +20,7 @@ As a top-tier AI presentation strategist, receive source documents, perform cont
 
 ## 1. Strategist Confirmation Stage
 
-🚧 **GATE — Mandatory read first**: `read_file templates/design_spec_reference.md` before any analysis or writing. The design_spec.md output MUST follow that template's 11-section structure exactly. After writing, self-check each section is present: I Project Info → II Canvas → III Visual Theme → IV Typography → V Layout → VI Icon → VII Visualization → VIII Image → IX Outline → X Speaker Notes → XI Tech Constraints.
+🚧 **GATE — Mandatory read first**: `read_file templates/design_spec_reference.md` before any analysis or writing. The design_spec.md output MUST follow that template's 10-section structure exactly. After writing, self-check each section is present: I Project Info → II Canvas → III Visual Theme → IV Typography → V Layout → VI Icon → VII Visualization → VIII Image → IX Outline → X Speaker Notes.
 
 ⛔ **BLOCKING**: After the read, present professional recommendations for the confirmation fields below and wait for explicit user confirmation.
 
@@ -28,7 +28,7 @@ As a top-tier AI presentation strategist, receive source documents, perform cont
 
 | Stage | Items | Role |
 |---|---|---|
-| **1 — direction anchors** | `a` canvas · `c` key info — audience + `content_divergence` + **delivery purpose** *(PPT only)* (promoted out of `g`) · `d` mode + visual_style | confirmed first |
+| **1 — direction anchors** | `a` canvas · `c` key info — audience + `content_divergence` + **delivery purpose** *(PPT only)* (promoted out of `g`) · `d` mode + visual_style · template adherence *(only when Step 3 loaded a deck/layout template)* | confirmed first |
 | **2 — design system** (re-derived from the user's *actual* Stage 1) | `b` page count · `e` color · `f` icon · `g` typography (font + size, formula policy) | derived from Stage 1 |
 | **3 — images / execution** (re-derived from the user's *actual* Stage 1 + Stage 2) | `h` image source + generated-image style · generation mode · refine-spec toggle | derived from confirmed direction + design system |
 
@@ -99,6 +99,19 @@ The deck's **visual aesthetic** — shape language, decoration density, whitespa
 Write the locked value to `spec_lock.md` `- visual_style:` and the rationale to `design_spec.md`. Executor loads only that one visual-style file.
 
 > **Template vs preset**: a style mention may sound like a template name ("academic style" vs the `academic_defense/` template directory). Step 3 only triggers on an explicit template directory path supplied by the user — bare names and style words never copy templates; they map to a visual-style preset here. If a template was triggered upstream, its files are already in `<project_path>/templates/` and its fused design_spec governs.
+
+**Legacy native contract**: When `<project_path>/templates/native_structure.json` exists, treat it as backward-compatible `preserve` input only. Current templates declare their PowerPoint structure directly in the SVG roster.
+
+**Template adherence confirmation**: Surface this closed Stage-1 choice only when Step 3 loaded a `kind: deck` or `kind: layout` template. Omit it for free design and brand-only templates.
+
+| Value | Planning and export behavior |
+|---|---|
+| `strict` | Map every page to one template SVG. Keep its explicit Master/Layout/placeholder contract and output layout key unchanged. |
+| `adaptive` | Map every page to the closest template SVG. Keep the template Master contract, but allow a new explicit Layout key when the selected composition must adapt to the content. |
+
+**Default — adaptive (may override when the user requests exact template use)**: Recommend `adaptive` when the user supplied only a template path with no stricter instruction. Preselect `strict` when the user explicitly asks to follow or preserve the template closely; the Stage-1 confirmation still records the final choice. Record the confirmed value in `design_spec.md §I` and as `template_adherence` under `spec_lock.md pptx_structure`.
+
+> Note: `content_divergence` controls how source material is reorganized; `template_adherence` controls how template visuals/layouts are used. Never infer one from the other.
 
 **Downstream effect**: e / f / g / h realize the locked mode + visual style. Example: `showcase` + `dark-tech` → e applies one luminous accent on a dark field; g pairs a clean sans with mono; f minimal glow icons; h the `digital-dashboard` rendering.
 
@@ -813,7 +826,7 @@ This is what makes the axis meaningful: a `presentation` deck and a `text` deck 
 
 > Note: §IX is the only content copy the Executor re-reads after context compression — what you write there is what survives.
 
-### 6.2 Outline Output Specification (Must include 11 chapters)
+### 6.2 Outline Output Specification (Must include 10 sections)
 
 | Chapter | Content Requirements |
 |---------|---------------------|
@@ -827,21 +840,24 @@ This is what makes the axis meaningful: a `presentation` deck and a `text` deck 
 | VIII. Image Resource List | Filename, dimensions, ratio, purpose, status, generation description |
 | IX. Content Outline | Grouped by chapter; each page includes layout, title, core message (the page's one idea), content blocks (in the selected phrasing mode), visualization type (if applicable) |
 | X. Speaker Notes Requirements | File naming rules, content structure description |
-| XI. Technical Constraints Reminder | SVG generation rules, PPT compatibility rules |
 
 **Generation steps**:
 1. Read reference template: `templates/design_spec_reference.md`
 2. Generate complete spec from scratch based on analysis
 3. Save to: `projects/<project_name>.../design_spec.md`
-4. **Generate execution lock**: read `templates/spec_lock_reference.md` and produce `projects/<project_name>.../spec_lock.md` — a distilled, machine-readable short form of the color / typography / icon / image / **page_rhythm** / **page_layouts** / **page_charts** decisions above. This file is what the Executor re-reads before every page (see [executor-base.md](executor-base.md) §2.1). The values in `spec_lock.md` MUST exactly match the decisions recorded in `design_spec.md`; if they ever diverge, `spec_lock.md` wins and `design_spec.md` should be treated as historical narrative.
+4. **Generate execution lock**: read `templates/spec_lock_reference.md` and produce `projects/<project_name>.../spec_lock.md` — a distilled, machine-readable short form of the color / typography / icon / image / **page_rhythm** / **page_layouts** / **page_charts** decisions above. Write `pptx_layouts` before generation only for legacy immediate-template or preserve routes; new baseline/template distillation writes it after the complete SVG pages exist. This file is what the Executor re-reads before every page (see [executor-base.md](executor-base.md) §2.1). The values in `spec_lock.md` MUST exactly match the decisions recorded in `design_spec.md`; if they ever diverge, `spec_lock.md` wins and `design_spec.md` should be treated as historical narrative.
    - **page_rhythm is mandatory**: Based on the page list in §IX Content Outline, assign each page one of `anchor` / `dense` / `breathing` (see `spec_lock_reference.md` for the full vocabulary). This is what breaks the uniform "every page is a card grid" feel — without it the Executor defaults all pages to `dense`.
    - **Rhythm follows narrative, not quota**: `breathing` pages mark natural pauses — chapter transitions, standalone emphasis (hero quote / big number), SCQA bridges. Dense decks may legitimately be all `dense`. **Do NOT invent filler pages** ("Thank you", empty dividers) to pad rhythm — every `breathing` page must say something independent. Delivery purpose biases the overall lean (`presentation` toward more `anchor` / `breathing`, `text` toward `dense`; see §6.1) — a bias, never a quota.
    - **Cover impact is mandatory**: Page `P01` is the deck's first visual contract, not a generic title slide. In `design_spec.md §IX`, add a `Cover impact` line for `P01` that names one concrete hook and one concrete composition strategy. Use the source's strongest available signal: a provocative core claim, object / scene metaphor, hero number, founder / product / audience moment, or a distilled conflict. Pair it with one concrete composition strategy — such as `full-bleed image + floating title`, `typographic poster`, `hero object`, `data hook`, `editorial scene`, `high-contrast abstract geometry`, or a fresh composition the deck's subject suggests (these are starting points, not the allowed set). If no external or AI image is available, still specify a native-SVG visual hook; do not fall back to "title + subtitle + decorative background". (Beautify / template-fill keep the source cover verbatim — this rule does not apply on those preservation paths.)
    - **Cover rhythm lock**: `P01` remains `anchor` in `spec_lock.md page_rhythm`, but its §IX `Cover impact` must prevent content-page patterns. Do not plan multi-card grids, agenda-like bullets, or equal-weight columns on the cover unless a template explicitly requires that structure, or a preservation path (beautify / template-fill) is transcribing the source cover verbatim.
    - **Closing impact (only when the deck closes)**: the deck's last page is its final visual contract — the strongest impression after the cover. When the deck genuinely lands on a conclusion / call-to-action / final-takeaway page, give it a `Closing impact` line in §IX: name the one thing the audience should leave with (a distilled takeaway, a forward call, a memorable restatement of the core claim) + one composition that delivers it — never a generic "Thank you" / contact-only slide or a centered-title reprise of the cover. **Do NOT invent a closing page to satisfy this** — the filler-page ban above still holds; apply it only to the page where the deck actually resolves. Same exemptions as the cover: skip on template / beautify / template-fill preservation paths.
-   - **page_layouts (write only when a template is in use)**: For each page that inherits a template SVG, add `P<NN>: <svg_basename>` (e.g., `P04: 03a_content_image_text`). Pages designed freely get **no entry** — Executor reads the absence as "free design, no inheritance". If zero pages use a template, omit the section entirely.
+   - **pptx_structure is mandatory**: Write `mode: baseline` for free design and brand-only routes. Do not add `layout_strategy` during baseline planning; the explicit [`distill-layouts`](../workflows/distill-layouts.md) workflow adds it only after the user selects completed pages. When a deck/layout template is confirmed, write `mode: template` and `template_adherence: strict|adaptive`. Add `layout_strategy: distill` after the template bounds preflight below. Use `mode: preserve` only when reopening a legacy strict project that already carries a validated `native_structure.json` + `source_template.pptx` pair. Do not choose `flat`; it is a CLI-only diagnostic override.
+   - **Template bounds preflight**: Inspect every selected `page_layouts` SVG before finalizing the lock. If every placeholder has explicit `data-pptx-placeholder-bounds`, use deferred distillation for either adherence. Adaptive may also use deferred distillation with a legacy bounds-missing prototype because Distiller authors new design-zone bounds. If strict selects any bounds-missing prototype, use legacy immediate-template compatibility: omit `layout_strategy`, write the complete kindless `pptx_layouts` mapping from prototype key/name before generation, and emit one warning naming the legacy template pages. Do not silently convert strict to adaptive or derive strict bounds from sample text.
+   - **pptx_layouts (native output Layout contract)**: Omit the whole section during planning for new baseline and distillation-capable template routes. The §IX `Layout` line describes visual composition intent only; it is not a final PowerPoint Layout key. Template `page_layouts` selects the input prototype; [`distill-layouts`](../workflows/distill-layouts.md) writes the output key/name/kind only from the completed SVG. Bounds-missing strict legacy templates, other immediate locks without `layout_strategy`, and preserve locks retain pre-generation mappings.
+   - **Post-design reuse boundary**: Do not predict rich reusable Layouts from the outline. After visual construction, only [`distill-layouts`](../workflows/distill-layouts.md) may finalize the output contract. Baseline promotes user-selected pages and maps unselected pages to one utility Layout. Template strict restores the selected prototype's structure/bounds; adaptive retains its Master ids/topology/geometry and may distill an evolved Layout. Non-mirror skin continues to follow `spec_lock`. The exporter never discovers or clusters layouts itself.
+   - **page_layouts (deck/layout templates only)**: Add one `P<NN>: <svg_basename>` row for every page. This is the complete input-prototype mapping. Strict later restores that SVG's structural Layout contract; adaptive keeps its Master structure and may evolve the Layout after the page is complete. Omit the whole section for free-design and brand-only routes.
    - **page_charts (write only for chart pages that match a catalog template)**: For each page in `design_spec.md §VII` whose `reference template path` points to `templates/charts/<name>.svg`, add `P<NN>: <chart_name>`. Pages with `no-template-match` in §VII MUST NOT appear here (Executor would look for a non-existent reference). If the deck has no data-visualization pages, omit the section.
-   - **Hard rule**: Use both `page_layouts` and `page_charts` for the same page only when the layout template is a compatible shell for the chart. Do not pair chart pages with conflicting page layouts (e.g., `waterfall_chart` + timeline layout, KPI cards + circle-diagram layout). If no compatible layout exists, omit the page from `page_layouts`.
+   - **Hard rule**: Use both `page_layouts` and `page_charts` only with a compatible template shell. For a chart page without an exact roster match, adaptive mode selects the closest neutral input prototype and defers any new output Layout key until post-design distillation; strict mode must select an existing compatible Layout or revise the outline. Never omit `page_layouts` inside a new deck/layout template route.
 
 ---
 

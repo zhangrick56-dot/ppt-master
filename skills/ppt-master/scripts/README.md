@@ -43,9 +43,11 @@ python3 scripts/update_repo.py
 
 | Area | Primary scripts | Documentation |
 |------|-----------------|---------------|
-| Conversion | `source_to_md.py`, `source_to_md/pdf_to_md.py`, `source_to_md/doc_to_md.py`, `source_to_md/excel_to_md.py`, `source_to_md/ppt_to_md.py`, `source_to_md/web_to_md.py`, `pptx_intake.py` | [docs/conversion.md](./docs/conversion.md) |
+| Conversion | `source_to_md.py`, `source_to_md/pdf_to_md.py`, `source_to_md/doc_to_md.py`, `source_to_md/excel_to_md.py`, `source_to_md/ppt_to_md.py`, `source_to_md/web_to_md.py`, `pptx_intake.py`, `pptx_to_svg.py` | [docs/conversion.md](./docs/conversion.md) |
 | Project management | `project_manager.py`, `batch_validate.py`, `generate_examples_index.py`, `error_helper.py`, `pptx_template_import.py`, `template_fill_pptx.py`, `native_enhance_pptx.py` | [docs/project.md](./docs/project.md) |
-| SVG pipeline | `finalize_svg.py`, `svg_to_pptx.py`, `total_md_split.py`, `svg_quality_checker.py`, `extract_svg_assets.py`, `animation_config.py`, `notes_to_audio.py` | [docs/svg-pipeline.md](./docs/svg-pipeline.md) |
+| SVG pipeline | `preset_shape_svg.py`, `finalize_svg.py`, `svg_to_pptx.py`, `total_md_split.py`, `svg_quality_checker.py`, `extract_svg_assets.py`, `animation_config.py`, `notes_to_audio.py` | [docs/svg-pipeline.md](./docs/svg-pipeline.md); [native preset authoring](../references/native-shape-authoring.md) |
+| PPTX transitions | `pptx_transitions.py` | [docs/pptx-transitions.md](./docs/pptx-transitions.md) |
+| PPTX animations | `pptx_animations.py`, `animation_config.py` | [docs/pptx-animations.md](./docs/pptx-animations.md) |
 | Spec maintenance | `update_spec.py` | [docs/update_spec.md](./docs/update_spec.md) |
 | Image tools | `image_gen.py`, `latex_render.py`, `analyze_images.py`, `gemini_watermark_remover.py` | [docs/image.md](./docs/image.md) |
 | Repo maintenance | `update_repo.py` | README install/update section |
@@ -62,6 +64,7 @@ python3 scripts/source_to_md/ppt_to_md.py <deck.pptx>
 python3 scripts/source_to_md/doc_to_md.py <file.docx>
 python3 scripts/source_to_md/excel_to_md.py <workbook.xlsx>
 python3 scripts/source_to_md/web_to_md.py <url>
+python3 scripts/pptx_to_svg.py <deck.pptx> -o <output_dir>  # reconstruction/reference SVG import
 ```
 
 Project setup:
@@ -104,6 +107,16 @@ python3 scripts/native_enhance_pptx.py validate <project_path>
 python3 scripts/native_enhance_pptx.py apply <project_path>
 ```
 
+Native preset shape authoring (one registry-backed fragment on stdout):
+
+```bash
+python3 scripts/preset_shape_svg.py list --search arrow
+python3 scripts/preset_shape_svg.py describe rightArrow
+python3 scripts/preset_shape_svg.py render rightArrow --id process-arrow --frame 120 180 240 96 --fill '#2563EB'
+```
+
+The helper never writes a page or project file. Select one exact semantic stock-shape match, inspect the emitted fragment, and insert it into the hand-authored SVG with the normal patch workflow. Keep ordinary rectangles, ellipses, freeform geometry, charts, icons, and ambiguous silhouettes as regular SVG. See [`references/native-shape-authoring.md`](../references/native-shape-authoring.md) for the selection and metadata contract.
+
 Post-processing and export:
 
 ```bash
@@ -114,6 +127,30 @@ python3 scripts/svg_to_pptx.py <project_path>
 ```
 
 `finalize_svg.py` optimizes raster images by default using `2x` display pixels and max `2560px`. Native `svg_to_pptx.py` defaults to `--image-sizing cap`: only oversized full source images are reduced to max `2560px`, so later PowerPoint resizing keeps more image detail. Use `svg_to_pptx.py --image-sizing display --image-scale 2` only for aggressive size reduction, or `--no-image-optimize` when the native PPTX must embed original image bytes.
+
+`finalize_svg.py` remains mandatory because it creates the self-contained `svg_final/` visual preview. Those SVGs may be opened directly or inserted into PowerPoint as SVG pictures. The only supported generated-PPTX path is `svg_output/` through the project SVG-to-DrawingML converter; `-s final` is diagnostic-only, and PowerPoint's manual Convert-to-Shape operation is unsupported.
+
+For SVG-authoring routes, `svg_output/` is the complete visible page-design source: every exported text, image, shape, background, and template-derived layout element is present in the page SVG or explicitly referenced by it. Export may translate represented content into Master/Layout/Slide parts or native objects, but it does not retrieve missing visible content from templates or planning files. Speaker notes, animation, narration, transitions, `template-fill-pptx`, and `native-enhance-pptx` remain separately owned capabilities.
+
+Native `svg_to_pptx.py` defaults to `baseline`. Free-design/brand-only projects initially omit `pptx_layouts`, keep all actual content Slide-local, and use the compatibility pass: exact z-order-safe shared background/chrome promotion plus coarse root `data-pptx-page-role` families, with filename/id fallbacks. If the user later selects completed pages for reuse, [`distill-layouts`](../workflows/distill-layouts.md) writes one complete mapping: selected pages use explicit `distilled` Layout contracts and unselected pages share an empty `utility` Layout. The exporter compiles only those declarations, validates the finished package, and performs no visual-similarity inference. Baseline also prunes unused layouts and maps locked typography/colors into the PowerPoint theme. Use `--pptx-structure flat` for slide-local diagnostics.
+
+Post-design distilled baseline and distillation-capable deck/layout template routes use the same explicit Layout compiler. A distillation-capable template project selects complete input prototypes in `page_layouts` and defers `pptx_layouts` until every visible SVG page exists. Deferred strict output must match prototype key/name, Master/Layout structure, and placeholder bounds; adaptive must keep Master ids/topology/geometry and may finalize an evolved Layout or author new design-zone bounds for a legacy prototype. Adaptive can reuse the prototype key/name only when that Layout contract is unchanged; evolution receives a new identity. A bounds-missing strict legacy selection instead keeps the complete kindless immediate-template mapping and skips post-design distillation. Non-mirror skin remains project-controlled, while mirror reuses literal visual styling and permits only visible text replacement under an unchanged identity. Every distilled placeholder supplies explicit design-zone bounds independent of current Slide geometry. Atomic carriers retain matching Slide bindings; a final distilled composite object region stays ordinary and receives a hidden transparent binding proxy. The exporter validates prototype and cross-slide contracts, creates one reusable Layout per key, removes repeated inherited copies, and reads the finished package back to verify static/carrier rosters, backgrounds, placeholder identities, proxies, and default bounds.
+
+Current `create-template` output always rebuilds explicit SVG structure and does not package `native_structure.json` or `source_template.pptx`. `preserve` remains available only for existing projects that already carry the legacy pair.
+
+`pptx_to_svg.py` annotates verified text-grid tables and conservative chart data with `data-pptx-native` metadata. Table import covers exact physical row/grid topology, canonical rectangular merges, safe solid/no-fill per-side borders, plain multi-paragraph cells, and a closed run-rich paragraph schema. Each rich run requires `text` and may use only `bold`, `italic`, `underline`, `strike`, `color`, `font_size`, one `font_family`, `lang`, and `alt_lang`. A merge must use the exact `rowSpan` / `gridSpan` / `hMerge` / `vMerge` physical topology with empty merge slaves. Presentation-only source run XML normalizes, while relationship-bearing text, extensions, line breaks, fields, tabs, bullets, broken text topology, unsafe border XML, non-solid fills, and other merge encodings remain fallback-only. For table style `{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}`, the normalized SVG fallback resolves `wholeTbl`, `firstRow`, horizontal banding, theme colors/fonts, and direct cell/run overrides; other built-in/custom style families are not implied.
+
+Supported parsed column/bar/line/area, pie/doughnut, scatter, and bubble charts without a baked preview receive a deterministic readable fallback marked `data-pptx-visual-status="normalized"`. The importer additionally activates verified column/line/area combo charts, canonical OHLC stock charts, area charts with numeric date axes, verified scatter/bubble charts whose two value axes fit the closed `axes.x` / `axes.y` contract, radar charts, safe `of_pie` `serLines`, axis/title/legend normalization, and validated bar/column gap/overlap cases. Combo plots may retain independent primary/secondary category caches and workbook ranges. Both the category/value and XY contracts retain kind/position/visibility/label position/number format/min/max/major unit/reverse/major gridlines for native read-back. Scatter import derives effective `scatter_style` from uniform per-series line/marker/smooth state. The normalized XY fallback consumes only the two major-gridline flags; the C4/C5 additions do not expand the normalized renderer. `gapWidth` is accepted only as an integer in `0..500` and `overlap` only as an integer in `-100..100`; both normalize in native output, while malformed or out-of-range values fail closed. Safe common series paint forms and theme scheme colors are resolved; unknown series paint/style XML outside the explicit normalization boundaries still fails closed. Safe stock series style may pass the structural gate, but stock series, `hiLowLines`, and up-down bar local styling can still normalize under the editable-first contract. The editable native replacement remains allowed to normalize unmodeled no-fill/alpha/line/marker details and reports the route-level loss risk. Chart title/legend/axis titles and supported data-label flags are retained when the current schema can represent them. Fallback-only objects keep rendered SVG content or a baked chart preview and carry `data-pptx-native-status`, which validation and `--native-objects` export report as a warning. An active marker without a renderer keeps `data-pptx-visual-status="placeholder"` plus `data-pptx-route-status="reconstruction-only"`; default export keeps the placeholder and native opt-in may still reconstruct it.
+
+The ChartEx importer accepts exactly the validated treemap, sunburst, histogram, pareto, box-whisker, waterfall, and funnel data models. Supported hierarchy/category/value/series/subtotal data round-trips to native output; source style, axes, labels, and binning may normalize. Numeric caches must be non-empty and finite with exact contiguous point topology. This is not arbitrary ChartEx import or presentation fidelity, and the ChartEx native writer still only promises valid payload palette entries rather than full source styling.
+
+Active imported table/chart markers carry `data-pptx-fallback-sha256`. Visible fallback edits, reachable SVG fragment-definition changes, marker-local reference-target changes, and marker transforms make the baseline stale: the mandatory quality checker warns, default export remains available, and `--native-objects` fails instead of discarding the SVG edit. Legacy markers without a baseline remain convertible with a checker/native-route warning.
+
+Exporter-canonical classic charts also recover canonical solid series/slice
+colors and exact one- or two-paragraph title styling; two paragraphs retain
+their `title` / `subtitle` roles. Slide-number fields resolve to the display
+number defined by `firstSlideNum`; standalone master/layout SVGs retain their
+literal field fallback because they are shared by multiple slides.
 
 Image generation:
 
@@ -137,15 +174,16 @@ python3 scripts/update_repo.py --skip-pip
 - Keep one user-facing entry point per workflow at the top level of `scripts/`
 - Move provider-specific or helper internals into subdirectories
 - Prefer the unified entry points `project_manager.py`, `finalize_svg.py`, and `image_gen.py`
-- Prefer `svg_final/` over `svg_output/` when exporting
+- Use `svg_output/` for the only supported native PPTX export and `svg_final/` for self-contained SVG visual preview / picture insertion
 
 ## Related Docs
 
 - [Conversion Tools](./docs/conversion.md)
 - [Project Tools](./docs/project.md)
 - [SVG Pipeline Tools](./docs/svg-pipeline.md)
+- [PPTX Transition Core](./docs/pptx-transitions.md)
 - [Image Tools](./docs/image.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 - [Skill Entry](../SKILL.md)
 
-_Last updated: 2026-04-09_
+_Last updated: 2026-07-11_

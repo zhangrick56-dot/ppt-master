@@ -22,6 +22,17 @@ Route selection authority for PPT Master. Use this file before entering the main
 
 **Forbidden - route-choice prompts**: Do not present multiple implementation paths when this file already defines the route. Ordinary style choices and finite options belong at the next existing confirmation gate.
 
+### 1.1 SVG Page-Design Scope
+
+| Route family | SVG contract |
+|---|---|
+| Main SVG pipeline and `beautify-pptx` | Every visible output-page object is authored in the completed page SVG; templates and locks guide authoring but are not export-time visual overlays. |
+| `create-template` | Each reusable template SVG is a complete visual reference plus explicit PowerPoint structure metadata. |
+| `template-fill-pptx` and `native-enhance-pptx` | Native PPTX editing routes. They retain their OOXML contracts and are not forced through SVG. |
+| Animation, transition, speaker-note, and narration workflows | Presentation behavior/content outside the visible page-design layer; keep their dedicated sidecars and package post-processing. |
+
+**Hard rule**: Apply SVG page-design closure only after selecting an SVG-authoring route. Do not reroute a native PPTX operation merely to make every package-level capability pass through SVG.
+
 ---
 
 ## 2. Main Route Matrix
@@ -31,7 +42,7 @@ Route selection authority for PPT Master. Use this file before entering the main
 | Topic only, no source facts | User supplies only a topic name or requirement and no substantive source material | [`topic-research`](./topic-research.md), then main `SKILL.md` pipeline | Direct main pipeline with invented facts | Web/source gathering is allowed or user supplies facts | Research material becomes source input for Step 1 | Stop if facts cannot be gathered and the user supplies no source |
 | Source material can be reworked into a new story | PDF/DOCX/URL/Markdown/text/conversation content, or PPTX treated as content | Main `SKILL.md` pipeline | Direct PPTX edit workflows | Source content exists or is available in conversation | `design_spec.md`, `spec_lock.md`, `svg_output/`, exported PPTX | Stop at Step gates when required artifacts are missing |
 | PPTX as re-architectable source | User allows page count/order/outline to change, or asks to split/merge/drop/reorder slides | Main `SKILL.md` pipeline with `ppt_to_md.py` plus PPTX intake | [`beautify-pptx`](./beautify-pptx.md) | PPTX source exists | Markdown content plus `analysis/source_profile.json`; Strategist may re-outline | Stop if user requires exact 1:1 page preservation |
-| Explicit template directory path | User provides a directory containing `design_spec.md` with `kind: brand`, `kind: layout`, or `kind: deck` | Main `SKILL.md` Step 3 | Fuzzy template lookup by bare name | Path resolves and frontmatter kind is valid | Template assets copied/fused into `<project>/templates/` | Stop if the path does not exist or lacks valid `design_spec.md` |
+| Explicit template directory path | User provides a directory containing `design_spec.md` with `kind: brand`, `kind: layout`, or `kind: deck` | Main `SKILL.md` Step 3 | Fuzzy template lookup by bare name | Path resolves and frontmatter kind is valid | External assets are copied/fused into `<project>/templates/`; the same project's own `templates/` path is consumed in place | Stop if the path does not exist or lacks valid `design_spec.md` |
 
 ---
 
@@ -42,7 +53,7 @@ Route selection authority for PPT Master. Use this file before entering the main
 | Raw PPTX template plus new material/topic | "Use this PPT template to generate a PPTX", "fill this deck", "replace copy", native slide shell reuse | [`template-fill-pptx`](./template-fill-pptx.md) | Main SVG pipeline directly from raw PPTX template | Source PPTX plus content material or topic brief | New native PPTX in `exports/`, cloned/patched by OOXML | Stop if user instead wants a reusable template package |
 | Existing PPTX, preserve page split and wording | "Beautify", "re-layout", "make more professional" with same slide count/order and verbatim text | [`beautify-pptx`](./beautify-pptx.md) | Main pipeline if page count/order changes | Single source PPTX | Regenerated deck through SVG pipeline, one source slide to one output slide | Stop if user asks to split/merge/drop/reorder |
 | Finished PPTX, native enhancement only | Add notes, recorded narration, auto-advance, transitions, or stable-layout metadata | [`native-enhance-pptx`](./native-enhance-pptx.md) | SVG regeneration | Finished PPTX exists; content/layout should stay stable | Patched PPTX through direct OOXML | Stop if user asks for visual redesign |
-| PPTX/reference design should become a reusable template | "Create a template", "make reusable", "build template from this deck/design" | [`create-template`](./create-template.md) | `template-fill-pptx` one-off fill | PPTX or design reference exists | Template directory under `templates/<kind>/<id>/` | Stop after creation; main pipeline resumes only when user supplies the generated directory path |
+| PPTX/reference design should become a reusable template | "Create a template", "make reusable", "build template from this deck/design", including a template for one named initialized project | [`create-template`](./create-template.md) | `template-fill-pptx` one-off fill | PPTX/design reference exists, or the user gives an explicit template-creation brief; project output additionally requires an initialized target project | Library scope (default): `templates/<kind>/<id>/` plus index registration; project scope: direct `<project>/templates/` thin bundle with no global registration | Stop after library creation until the user supplies its directory path; project scope may resume main Step 3 with the in-place `<project>/templates/` path |
 
 **Hard rule**: Raw PPTX template plus "generate PPTX" routes to `template-fill-pptx` by default. A raw PPTX is not a Step 3 template until `create-template` has produced a reusable template directory.
 
@@ -61,6 +72,7 @@ Route selection authority for PPT Master. Use this file before entering the main
 | Object-level animation tuning | User asks for animation order, timing, effects, or object reveal behavior | [`customize-animations`](./customize-animations.md) | SVG groups / exported context exist | `animations.json` or validated animation config | Stop if requested target objects cannot be identified |
 | Live preview / element selection / annotations | User mentions live preview, preview, visual check in browser, clicking/selecting an element, or applying browser annotations | [`live-preview`](./live-preview.md) | Project exists; for annotation apply, generated SVGs exist | Running preview service or applied annotations plus re-export | Stop only if project path or SVGs are missing |
 | Visual review | User explicitly asks for per-page visual self-check or visual rubric | [`visual-review`](./visual-review.md) between Step 6 and Step 7 | SVG pages exist | Visual review findings and fixes before post-processing | Do not run without explicit user request |
+| Finalize reusable Layouts | User asks to promote completed baseline pages, or a template project has `layout_strategy: distill` with missing `pptx_layouts` after SVG generation | [`distill-layouts`](./distill-layouts.md) after Step 6 or explicit post-export re-entry | Completed SVG pages; template route also has one `page_layouts` prototype per page | Baseline: selected Layouts plus one utility; template: every page distilled against strict/adaptive prototype rules | Complete mappings are validation/no-op unless re-distill is explicit; cross-project `create-template` consumes selected/`distilled` pages and skips `utility` |
 | Recorded narration / video export | User asks for narration, voiceover, or video-style export | [`generate-audio`](./generate-audio.md) after post-processing | Notes and exported deck exist | Audio files and optional narration-embedded PPTX | Stop for the workflow's single backend/voice confirmation |
 
 ---

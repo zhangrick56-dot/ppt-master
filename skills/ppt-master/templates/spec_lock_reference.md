@@ -37,6 +37,8 @@
 
 > Strategist: fill only colors actually used. Add extra rows as needed; delete unused rows rather than leave as `#......`.
 >
+> **PowerPoint theme roles.** Native `baseline` / `template` export maps `bg` / `background` / `master_bg` → `lt1`, `secondary_bg` / `bg_secondary` → `lt2`, `text` / `body_text` → `dk1`, `text_secondary` → `dk2`, `primary` → `accent1`, `accent` → `accent2`, `secondary_accent` → `accent3`, and `border` → `accent4`. The first two additional non-black/non-white roles become `accent5` / `accent6`; remaining colors stay fixed. Mapping is usage-aware, so a background HEX is not automatically reused for inverse text. Preserve mode keeps the imported source theme; flat mode keeps concrete colors for diagnostics.
+>
 > **`image_rendering` and `image_palette`** — required only when `images` section below contains `ai`-sourced files. Values MUST be valid names from `references/image-renderings/_index.md` and `references/image-palettes/_index.md`, **or** the literal string `custom`. Image_Generator reads these and applies them deck-wide. Omit both rows when the deck has no AI-generated images.
 >
 > **`custom` escape hatch.** When set to `custom`, add a sibling `*_behavior` row carrying a one-paragraph prose description. Image_Generator splices the prose into the prompt in place of the preset file's fewshot snippet. Tail-case only — see [`image-renderings/_index.md`](../references/image-renderings/_index.md) §1.5 / [`image-palettes/_index.md`](../references/image-palettes/_index.md) §2 for invocation rules.
@@ -73,7 +75,9 @@
 >
 > **Size slots are anchors, not a closed menu.** Common slots (`title` / `subtitle` / `annotation`) cover frequent cases. Add role-specific slots (e.g. `cover_title: 88`, `hero_number: 56`, `subheading: 32`, `lead: 30`, `footnote: 16`, `chart_annotation: 16`) for the roles the deck actually uses — common for cover-heavy decks, consulting-style hero numbers, dense pages. **Mandatory — scan `§IX` and declare a slot for every role that recurs across pages, not just the four defaults.** A report / `text`-mode deck almost always recurs a per-page **core-message / lead line** and **page numbers / source credits / footnotes** → declare `lead` and `footnote` for them. `subheading` and `lead` sit between `subtitle` and `body` (their bands overlap `subtitle`) — pick by role, not size — and the core-message `lead` is a **primary** line, **always ≥ `body`**, never smaller. Leaving a recurring lead / footnote undeclared forces the Executor to improvise an unlocked size (and a core line improvised below `body` inverts the hierarchy). **Structural roles (title / body / subtitle / annotation / footnote) render at their locked size on every page — one role, one size, deck-wide.** Intermediate in-band sizes are for special / feature elements only (hero number, display title, one-off emphasis); declare a recurring one as its own slot so it stays consistent too.
 >
-> **⚠️ PPT-safe stack discipline (HARD rule).** PPTX stores concrete exported Latin / EA typefaces per run with no runtime fallback. Every stack's exported Latin / EA typefaces MUST resolve to cross-platform pre-installed fonts: `"Microsoft YaHei"` / `SimSun` / `Arial` / `"Times New Roman"` / `Consolas`. Stacks that export non-preinstalled typefaces (Inter / Google Fonts / brand typefaces) may be used only when the Design Spec notes the font-install or embedding requirement.
+> **Explicit Layout Master defaults**: `pptx_structure.mode: template` and a structured baseline after Layout distillation both require unitless `title` and `body`. Native export writes `title` into every Master `titleStyle` default and `body` into every `bodyStyle` / `otherStyle` default, changing only `a:defRPr@sz`. Direct page-run sizes and role-specific Layout placeholder prototype sizes remain unchanged. Unmapped baseline, `preserve`, and `flat` do not rewrite Master text-style sizes.
+>
+> **⚠️ PPT-safe stack discipline (HARD rule).** Native `baseline` / `template` export maps `title_family` to the PowerPoint theme major font and `body_family` (or `font_family`) to the theme minor font. Runs whose resolved face matches either role use `+mj-*` / `+mn-*` theme tokens; other role families remain concrete per-run typefaces. Every exported Latin / EA face MUST therefore resolve to cross-platform pre-installed fonts: `"Microsoft YaHei"` / `SimSun` / `Arial` / `"Times New Roman"` / `Consolas`. Stacks that resolve to non-preinstalled typefaces (Inter / Google Fonts / brand typefaces) may be used only when the Design Spec notes the font-install or embedding requirement. `preserve` keeps the source template theme; `flat` keeps concrete fonts for diagnostics.
 >
 > **Stack length discipline.** 3-4 fonts per stack is the sweet spot. Converter only writes the **first** Latin and **first** CJK font into PPTX — everything after is silently dropped. macOS-only families (`Songti SC`, `Menlo`, `Monaco`, `Helvetica`) are auto-mapped to Windows equivalents via `FONT_FALLBACK_WIN` (see `scripts/svg_to_pptx/drawingml/utils.py`); stacking both is redundant. Lead with Windows-preinstalled fonts (`Microsoft YaHei` / `SimSun` / `Arial` / `Georgia` / `Consolas`); keep at most **one** macOS-exclusive family (typically `"PingFang SC"`) as a browser-preview nicety.
 
@@ -120,20 +124,73 @@
 >
 > **Missing or empty section** → Executor falls back to `dense` for every page (legacy pre-rhythm behavior). Remove the section only for legacy decks; new decks MUST fill it.
 
+## pptx_structure
+- mode: baseline
+
+> One deck-wide native PowerPoint structure policy. New projects always include this section.
+>
+> When Step 3 loaded a deck/layout template, add exactly one of:
+> ```
+> - template_adherence: adaptive
+> - template_adherence: strict
+> ```
+> Omit the row for free design and brand-only templates. Both values require one `page_layouts` row per page in new projects. Add `- layout_strategy: distill` and omit `pptx_layouts` until every complete SVG page exists, except when strict uses a legacy template page whose placeholder bounds are missing. That compatibility case omits the strategy and writes the complete kindless output mapping before generation. Adaptive may still distill new design-zone bounds.
+>
+> New template example:
+> ```
+> - mode: template
+> - template_adherence: adaptive
+> - layout_strategy: distill
+> ```
+>
+> - `baseline` — default for free design and brand-only routes. During visual construction, omit `pptx_layouts` and explicit root Layout/layer/placeholder metadata so the page composition remains unconstrained. Baseline compatibility export remains available until the user explicitly runs [`distill-layouts`](../workflows/distill-layouts.md).
+> - `template` — required whenever Step 3 loaded a deck/layout template. Distillation-capable projects pair it with `layout_strategy: distill`, a complete `page_layouts` input mapping, and no planning-time `pptx_layouts`. Bounds-missing strict legacy prototypes and existing locks without a strategy retain immediate/pre-authored mappings.
+> - `preserve` — legacy strict-only compatibility for an existing project that already ships `native_structure.json` + `source_template.pptx`. Do not select it for newly created templates.
+> - `flat` — diagnostic escape hatch. Do not lock this in a normal project; pass it on the CLI when comparing slide-local output.
+>
+> **Post-design distillation**: Baseline adds `- layout_strategy: distill` only after the user selects completed pages. A distillation-capable template route locks the strategy during planning but defers the whole `pptx_layouts` section. [`distill-layouts`](../workflows/distill-layouts.md) writes the complete final mapping and matching root kind after visual generation. Export rejects the pending or partial state. Strict legacy immediate compatibility skips this state.
+>
+> Preserve example:
+> ```
+> - mode: preserve
+> - template_adherence: strict
+> - source_template: templates/source_template.pptx
+> - native_structure: templates/native_structure.json
+> ```
+
+## pptx_layouts
+
+> Distillation-capable template projects and free-design/brand-only baseline projects omit this section during visual generation. [`distill-layouts`](../workflows/distill-layouts.md) writes it only from completed SVG pages. Bounds-missing strict legacy templates, other immediate locks without `layout_strategy`, and preserve locks retain pre-authored rows.
+>
+> Legacy template/preserve value format: `<layout_key> | <PowerPoint layout name>`. Post-design distillation adds one final kind segment: `<layout_key> | <PowerPoint layout name> | <layout_kind>`. Baseline accepts `distilled` or `utility`; template distillation requires `distilled` on every page.
+>
+> Distilled baseline example:
+> ```
+> - P01: freeform-unselected | Freeform | utility
+> - P02: editorial-visual | Editorial Visual | distilled
+> - P03: freeform-unselected | Freeform | utility
+> ```
+>
+> **Distilled Layout**: `distilled` means a completed page supplied the final reusable contract. Baseline uses user-selected pages; template routes use every `page_layouts` prototype under strict/adaptive rules. Every placeholder carries explicit `data-pptx-placeholder-bounds` derived from its design zone, never from text length or glyph bounds. The same Layout may serve Slides with different local proportions; bounds define only the reusable default.
+>
+> **Utility Layout**: `utility` is the single empty `freeform-unselected` Layout for unselected baseline pages. It is forbidden in template distillation because every template page has an input prototype.
+>
+> **All-or-none final state**: Once distillation starts, include exactly one row per generated page and matching `data-pptx-layout` / name / kind on every SVG root. Partial mappings are invalid.
+
 ## page_layouts
 - P01: 01_cover
 - P03: 02a_chapter
 - P04: 03a_content_abstract
 
-> One entry per page **that uses a template SVG**. Key: `P<NN>` matching §IX. Value: the template's SVG basename without extension (e.g., `01_cover`, `03a_content_image_text`) — Executor resolves it to `templates/<value>.svg`. Modern templates ship many content-page variants (`03a_content_abstract`, `03b_content_image_text`, `03c_content_three_items` …); the page-type → single-file mapping in `executor-base.md §1` no longer covers them, so this section is the per-page truth.
+> For a deck/layout template route, include one entry per page. Key: `P<NN>` matching §IX. Value: the template SVG basename without extension. This is the input prototype mapping, not the final native Layout mapping. Strict restores its structural contract and bounds after design; adaptive retains its Master ids/topology/geometry and may output a new Layout contract. Non-mirror skin follows the project lock.
 >
-> **No entry for a page** → that page is free design (no template inheritance). Mixed decks are supported: e.g., cover/chapter pages inherit a template while content pages are free.
+> **No entry for a page** is valid only when the entire route is free design or brand-only. It is an error in template mode.
 >
-> **Hard rule**: Use both `page_layouts` and `page_charts` for the same page only when the layout template is a compatible shell for the chart. Do not assign a conflicting layout just to fill every page: a waterfall chart should not inherit a timeline layout, and KPI cards should not inherit a circle-diagram layout unless that is the intended visual structure. When no compatible layout exists, omit the page from `page_layouts`.
+> **Hard rule**: Use both `page_layouts` and `page_charts` only with a compatible shell. Adaptive mode may start from a neutral content template and finalize a new explicit Layout after design; strict mode must choose an existing compatible Layout or revise the outline.
 >
-> **Whole section omitted** → entire deck is free design. Equivalent to no rows but cleaner; do this when zero pages reference a template.
+> **Whole section omitted** → free design or brand-only route, except for an already-existing legacy immediate-template project that predates explicit prototype mapping. New template strict/adaptive routes require complete `page_layouts`. On a distillation-capable route, `pptx_layouts` appears only after post-design distillation; a bounds-missing strict legacy selection instead writes the complete kindless mapping during planning.
 >
-> **Strategist source**: copy the per-page SVG choices from `design_spec.md §VI Page Roster` (or §IX outline if Roster is absent). Names must match files in `templates/` exactly — typos cause silent fallback to free design.
+> **Strategist source**: record each project-page choice in project `design_spec.md §IX Content Outline`, using the copied template package's `templates/design_spec.md §V Page Roster` descriptions as the roster authority. Basenames must match files in `templates/` exactly. A typo is a blocking contract error: stop before drawing and report it; never fall back to free design inside template mode.
 
 ## page_charts
 - P05: column_chart
@@ -150,7 +207,7 @@
 
 ## forbidden
 - Mixing icon libraries
-- rgba()
-- `<style>`, `class`, `<foreignObject>`, `textPath`, `@font-face`, `<animate*>`, `<script>`, `<iframe>`, `<symbol>`+`<use>`
-- `<g opacity>` (set opacity on each child element individually)
-- HTML named entities in text (`&nbsp;`, `&mdash;`, `&copy;`, `&ndash;`, `&reg;`, `&hellip;`, `&bull;` …) — write as raw Unicode (`—`, `©`, `→`, NBSP, etc.); XML reserved chars `& < > " '` must be escaped as `&amp; &lt; &gt; &quot; &apos;`. See shared-standards.md §1.0
+- `mask`, `<style>`, `class`, external CSS, `<foreignObject>`, `textPath`, `@font-face`, `<animate*>`, `<set>`, `<script>` / event attributes, `<iframe>`
+- HTML named entities in text; write typography as raw Unicode and escape XML reserved characters
+
+> **Execution reminder — not authoring authority**: the baseline blacklist above is intentionally terse. Add only deck-specific execution locks. General SVG required / forbidden / conditional rules are owned by [`shared-standards.md`](../references/shared-standards.md); do not copy its feature matrix or parameter contracts into `spec_lock.md`.

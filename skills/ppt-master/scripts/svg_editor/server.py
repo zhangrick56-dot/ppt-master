@@ -34,7 +34,7 @@ import urllib.request
 import webbrowser
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -88,6 +88,11 @@ from embed_icons import (  # noqa: E402
     resolve_icon_path,
     extract_paths_from_icon,
     generate_icon_group,
+)
+from svg_to_pptx.geometry_properties import (  # noqa: E402
+    GeometryStyleError,
+    INLINE_GEOMETRY_PROPERTIES,
+    materialize_inline_geometry_properties,
 )
 
 _ICONS_DIR = _SCRIPTS_DIR.parent.parent / 'templates' / 'icons'
@@ -184,6 +189,47 @@ def _inline_icons(content: str) -> tuple[str, list[dict]]:
     return new_content, warnings
 
 
+def _strip_edited_inline_geometry(
+    elem: ET.Element,
+    attr_names: Iterable[str],
+) -> None:
+    """Remove style declarations superseded by edited geometry attributes."""
+    style = elem.get('style')
+    if not style:
+        return
+    tag = elem.tag.rsplit('}', 1)[-1] if '}' in elem.tag else elem.tag
+    supported = INLINE_GEOMETRY_PROPERTIES.get(tag, frozenset())
+    edited = {
+        str(name).lower()
+        for name in attr_names
+        if str(name).lower() in supported
+    }
+    if not edited:
+        return
+
+    retained = []
+    changed = False
+    for raw_declaration in style.split(';'):
+        declaration = raw_declaration.strip()
+        if not declaration:
+            continue
+        if ':' not in declaration:
+            retained.append(declaration)
+            continue
+        raw_name, _raw_value = declaration.split(':', 1)
+        if raw_name.strip().lower() in edited:
+            changed = True
+            continue
+        retained.append(declaration)
+
+    if not changed:
+        return
+    if retained:
+        elem.set('style', '; '.join(retained))
+    else:
+        elem.attrib.pop('style', None)
+
+
 # ---------------------------------------------------------------------------
 # Staged-edit value validation (POST /api/slide/<name>/edit).
 # The browser may expose raw element attributes, so validation protects only
@@ -196,6 +242,10 @@ _UNSAFE_COLOR_RE = re.compile(r'[;:@\\]|url\s*\(', re.IGNORECASE)
 _SAFE_ATTR_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_.:-]*$')
 _MAX_ATTR_VALUE_LEN = 256
 _MAX_EDIT_TEXT_LEN = 5000
+_PURE_TRANSLATE_RE = re.compile(
+    r'^\s*(?:translate\(\s*[-+]?\d+(?:\.\d+)?'
+    r'(?:(?:\s*,\s*|\s+)[-+]?\d+(?:\.\d+)?)?\s*\)\s*)+$'
+)
 _ADDABLE_BATCH_ATTRS = frozenset({
     'fill', 'stroke', 'opacity',
     'font-size', 'font-family', 'font-weight', 'text-anchor',
@@ -268,6 +318,42 @@ def _find_by_id(root: ET.Element, element_id: str) -> Optional[ET.Element]:
     return None
 
 
+def _explicit_paragraph_owner(
+    root: ET.Element,
+    target: ET.Element,
+) -> Optional[ET.Element]:
+    """Return the explicit paragraph <text> owning target, if any."""
+    for candidate in root.iter():
+        tag = candidate.tag.split('}', 1)[-1]
+        if tag != 'text' or candidate.get('data-pptx-text-mode') != 'paragraph':
+            continue
+        if candidate is target or target in candidate.iter():
+            return candidate
+    return None
+
+
+def _validate_explicit_paragraph_edit(
+    root: ET.Element,
+    target: ET.Element,
+    attrs: dict,
+) -> Optional[str]:
+    """Protect paragraph frame/visual-line ownership in Live Preview."""
+    owner = _explicit_paragraph_owner(root, target)
+    if owner is None:
+        return None
+    if target is not owner and {'x', 'y', 'dy', 'transform'} & attrs.keys():
+        return 'explicit paragraph lines cannot be moved independently; switch to lines mode'
+    if target is owner and {'x', 'y'} & attrs.keys():
+        return 'move an explicit paragraph with a pure translate, not parent x/y'
+    if target is owner and 'data-pptx-text-bounds' in attrs:
+        return 'explicit paragraph bounds require a dedicated frame edit operation'
+    if target is owner and 'transform' in attrs:
+        transform = attrs.get('transform')
+        if transform is not None and not _PURE_TRANSLATE_RE.fullmatch(transform):
+            return 'explicit paragraphs only support pure translate transforms'
+    return None
+
+
 def _apply_edit_record(root: ET.Element, record: dict) -> tuple[bool, Optional[str]]:
     element_id = record.get('element_id')
     if not isinstance(element_id, str):
@@ -290,6 +376,13 @@ def _apply_edit_record(root: ET.Element, record: dict) -> tuple[bool, Optional[s
             return ok, reason
     attrs = record.get('attrs')
     if attrs:
+        target = _find_by_id(root, element_id)
+        if target is None:
+            return False, 'not-found'
+        paragraph_error = _validate_explicit_paragraph_edit(root, target, attrs)
+        if paragraph_error:
+            return False, paragraph_error
+        _strip_edited_inline_geometry(target, attrs.keys())
         ok, reason = set_attributes(root, element_id, attrs)
         if not ok:
             return ok, reason
@@ -578,6 +671,12 @@ def create_app(
                 logger.warning('slide parse failed: %s: %s', name, exc)
                 return jsonify({'error': f'Failed to parse SVG: {exc}'}), 500
 
+            try:
+                materialize_inline_geometry_properties(root)
+            except GeometryStyleError as exc:
+                logger.warning('slide geometry materialization failed: %s: %s', name, exc)
+                return jsonify({'error': f'Invalid inline geometry: {exc}'}), 400
+
             assign_temp_ids(root)
             if pending_edits:
                 ok, reason = _apply_edit_records(root, pending_edits)
@@ -712,6 +811,11 @@ def create_app(
         except ET.ParseError as exc:
             return jsonify({'error': f'Failed to parse SVG: {exc}'}), 500
 
+        try:
+            materialize_inline_geometry_properties(root)
+        except GeometryStyleError as exc:
+            return jsonify({'error': f'Invalid inline geometry: {exc}'}), 400
+
         assign_temp_ids(root)
         pending = app.config['PENDING_EDITS'].get(name) or []
         ok, reason = _apply_edit_records(root, pending)
@@ -727,6 +831,9 @@ def create_app(
             attr_err = _validate_edit_attrs(attrs, set(target.attrib.keys()))
             if attr_err:
                 return jsonify({'error': attr_err}), 400
+            paragraph_error = _validate_explicit_paragraph_edit(root, target, attrs)
+            if paragraph_error:
+                return jsonify({'error': paragraph_error}), 400
 
         changes = []
         staged: dict = {'element_id': element_id}
@@ -741,6 +848,7 @@ def create_app(
             staged['text'] = new_text
         if attrs:
             old_attrs = {k: target.get(k) for k in attrs}
+            _strip_edited_inline_geometry(target, attrs.keys())
             ok, reason = set_attributes(root, element_id, attrs)
             if not ok:
                 return jsonify({'error': f'Attribute edit failed: {reason}'}), (
@@ -986,6 +1094,35 @@ def _open_browser(url: str) -> bool:
     return False
 
 
+def _reuse_running_server(existing: dict, *, open_browser: bool) -> int:
+    """Idempotent relaunch: point at the already-running preview instead of failing.
+
+    A relaunch while the server is alive is the normal second-preview flow
+    (the first server keeps serving after the browser tab is closed), so it
+    must re-open the browser and exit 0 — not error out.
+    """
+    pid = existing.get('pid', '?')
+    try:
+        port = int(existing.get('port', 0) or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if not port:
+        logger.error(
+            'live preview is already running for this project (pid=%s) but its '
+            'lock records no usable port; run --shutdown, then start again',
+            pid,
+        )
+        return 1
+    url = _server_url(port)
+    logger.info(
+        'live preview already running for this project (pid=%s), reusing: %s',
+        pid, url,
+    )
+    if open_browser and not _open_browser(url):
+        logger.info('browser did not auto-open; open %s manually', url)
+    return 0
+
+
 def _open_browser_async(url: str, delay: float = 0.4) -> None:
     """Open the browser shortly after Flask starts binding its socket."""
     def _open() -> None:
@@ -1059,15 +1196,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     legacy_existing = _legacy_live_lock(project_path)
     if legacy_existing:
-        existing_pid = legacy_existing.get('pid', '?')
-        existing_port = legacy_existing.get('port', '?')
-        logger.error(
-            'live preview is already running for this project via legacy lock '
-            '(pid=%s, port=%s). Open http://%s:%s, click '
-            'Exit preview in the browser, or stop pid %s',
-            existing_pid, existing_port, PUBLIC_HOST, existing_port, existing_pid,
-        )
-        return 1
+        return _reuse_running_server(legacy_existing, open_browser=not args.no_browser)
 
     runtime_dir = _runtime_dir(project_path)
     lock_file = _lock_file(project_path)
@@ -1075,14 +1204,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.daemon:
         existing = _read_lock(lock_file)
         if existing and _process_alive(_lock_pid(existing)):
-            existing_pid = existing.get('pid', '?')
-            existing_port = existing.get('port', '?')
-            logger.error(
-                'live preview is already running for this project '
-                '(pid=%s, port=%s). Open http://%s:%s',
-                existing_pid, existing_port, PUBLIC_HOST, existing_port,
-            )
-            return 1
+            return _reuse_running_server(existing, open_browser=not args.no_browser)
 
         try:
             runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -1135,8 +1257,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # Per-project mutual exclusion. The major driver of orphaned servers is
     # --live mode (which used to disable idle timeout entirely) combined with
-    # silent restarts; refusing duplicate launches catches the accumulation
-    # at its source. Stale locks (dead pid) are overwritten by _claim_lock.
+    # silent restarts; reusing the running server on duplicate launches catches
+    # the accumulation at its source. Stale locks (dead pid) are overwritten
+    # by _claim_lock.
     try:
         runtime_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -1144,15 +1267,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
     existing = _claim_lock(lock_file, port)
     if existing:
-        existing_pid = existing.get('pid', '?')
-        existing_port = existing.get('port', '?')
-        logger.error(
-            'live preview is already running for this project '
-            '(pid=%s, port=%s). Open http://%s:%s, click '
-            'Exit preview in the browser, or run: kill %s',
-            existing_pid, existing_port, PUBLIC_HOST, existing_port, existing_pid,
-        )
-        return 1
+        return _reuse_running_server(existing, open_browser=not args.no_browser)
     # atexit covers normal interpreter shutdown (Ctrl+C / SystemExit);
     # /api/shutdown and idle timeout call _release_lock directly before
     # os._exit since atexit handlers do not run on os._exit.

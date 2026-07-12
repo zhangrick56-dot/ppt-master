@@ -1,6 +1,6 @@
 # Templates Guide: Use, Derive, and Boundaries
 
-A PPT Master "template" is a **structure + style** preset bundle: a set of page layout SVGs (cover / chapter / TOC / content / ending and their variants), a `design_spec.md` design specification, and matching assets (logos, backgrounds, decorative imagery). It is **not** a PowerPoint Slide Master, and **not** just a color palette — it is a reusable page-skeleton bundle the workflow can invoke directly.
+A PPT Master "template" is a **structure + style** preset bundle: complete standalone SVG pages whose metadata explicitly identifies Master, Layout, Slide, and placeholders, plus `design_spec.md` and matching assets. Export deterministically reconstructs native PowerPoint structure from those SVGs.
 
 This guide answers three questions:
 
@@ -21,10 +21,10 @@ The workflow **defaults to free design** — it will not ask whether you want a 
 Send a path to a template directory in your initial message. Anywhere in the sentence is fine; the path just has to be unambiguous:
 
 > "use this template: `skills/ppt-master/templates/layouts/academic_defense/`" ✅
-> "用这个模板做汇报：`projects/last_deck/template/`" ✅
+> "用这个模板做汇报：`projects/last_deck/templates/`" ✅
 > "做一份产品介绍，模板用 `/Users/me/Desktop/our_brand_v3/`" ✅
 
-The AI copies that directory's SVGs, `design_spec.md`, and assets into your project, then proceeds to the Strategist phase. The path can point to anywhere — the built-in library under `skills/ppt-master/templates/layouts/`, a previous project's `template/` folder, or any other location on disk.
+The AI installs that directory's SVGs, `design_spec.md`, and assets into your project, then proceeds to the Strategist phase. The path may point to the built-in library under `skills/ppt-master/templates/layouts/` or another self-contained template directory. When the path already is the current project's own `<project>/templates/` root, the workflow consumes it in place instead of copying it onto itself. A project-scoped create-template run may hand this exact validated path directly to Step 3 in the same conversation; this is the only exception to the initial-message rule. Do not use a different project's `templates/` root as an external package: its `../images/` and runtime icon references are owner-local. Promote that design through library scope first.
 
 ### What does NOT trigger the template flow
 
@@ -121,7 +121,7 @@ The workflow will then **mandatorily** confirm a template brief with you before 
 
 ### Step 1 — Prepare reference material
 
-**Strongly recommended: hand over the original `.pptx` file.** The current PPTX import pipeline achieves near-high-fidelity reconstruction — the workflow uses [`pptx_template_import.py`](../skills/ppt-master/scripts/pptx_template_import.py) to read OOXML directly, extracting theme colors, fonts, per-master themes, master/layout structure, placeholder metadata, and reusable image assets. It emits a layered `svg/` view as the machine-readable template source plus a self-contained `svg-flat/` view for visual preview, then hands the package to Template_Designer which rebuilds clean, maintainable SVGs. Covers, chapter dividers, and decoration-heavy pages all reproduce reliably. This is by far the most dependable derivation path today.
+**Strongly recommended: hand over the original `.pptx` file.** The importer reads OOXML directly and extracts every Master, Layout, placeholder, theme, and reusable asset into layered analysis references. Template_Designer uses those facts to rebuild one clean Master plus semantic Layouts as complete, explicitly annotated SVG pages. The original PPTX remains analysis input and is not packaged into the new template.
 
 You can also design from scratch from a brand guideline: provide a logo, primary color HEX, fonts, tone description, and a few mood references — the AI will design the page skeletons on the spot. This suits brands that don't yet have a finished PPT, only a VI manual.
 
@@ -133,21 +133,26 @@ The workflow does not silently infer values — before generation it lists these
 
 | Field | Notes |
 |-------|-------|
-| **Template ID** | Directory / index key. Prefer ASCII slug like `acme_consulting`; non-ASCII names work but must be filesystem-safe |
+| **Output scope** | `library` (default; reusable by every project and registered globally) or `project` (thin bundle written directly into one initialized project's template root) |
+| **Target project** | Required only for `project`; give the exact initialized project path |
+| **Template ID** | Portable template identity; in library scope it is also the directory / index key. Prefer ASCII slug like `acme_consulting`; non-ASCII names work but must be filesystem-safe |
 | **Display name** | Human-readable name for documentation |
 | **Category** | One of `brand` / `general` / `scenario` / `government` / `special` |
 | **Use cases** | Annual report / consulting / defense / government briefing / ... |
 | **Tone summary** | One line, e.g. "modern, restrained, data-driven" |
 | **Theme mode** | Light / dark / gradient / ... |
 | **Canvas format** | Default `ppt169` (16:9); specify other formats up front |
-| **Replication mode** | `standard` (default 5-page roster) / `fidelity` (one variant per visually distinct cluster from a `.pptx` source — count is driven by the source) / `mirror` (1:1 verbatim copy of every source slide, no abstraction, no placeholders) — `fidelity` and `mirror` both require a `.pptx` reference |
+| **Replication mode** | `standard` (default 5-page roster) / `fidelity` (one variant per visually distinct cluster) / `mirror` (literal visual copy of every source slide plus explicit layer ownership) |
+| **Native structure facts** | The brief reports source Master/Layout counts, placeholder identities, and multi-master status. Output is always rebuilt explicit SVG structure (`template`). |
 | **Visual fidelity** | (required for `standard` / `fidelity` when a reference exists) `literal` (reproduce original geometry / decoration / sprite crops as-is) or `adapted` (use reference for tone and structure but allow design evolution). Cover / chapter / ending are usually `literal`. **Not asked for `mirror`** — mirror is implicitly literal |
 | **Keywords** | 3–5 tags for index lookup |
 | Theme color / design notes / asset list | Optional — can be auto-extracted from the source |
 
 After confirmation the workflow echoes the finalized brief and emits the marker `[TEMPLATE_BRIEF_CONFIRMED]`. Subsequent steps only run after that marker. **This is a hard gate — no brief, no generation.**
 
-> Why so strict? Because a template is a library asset that future projects will reuse. Getting it right once is far cheaper than regenerating after the fact.
+For project scope, one more hard preflight runs before any final file is written: the target must already be initialized, its `templates/` root must be empty, and the planned bitmap/icon filenames must not collide with anything already in `images/` or `icons/`. A failed check stops before partial output; the workflow does not merge or overwrite.
+
+> Why so strict? A template is a structural contract, whether it is reused globally or only inside the current project. Confirming ownership and geometry first avoids partial or misplaced output.
 
 ### Step 3 — `standard`, `fidelity`, or `mirror`?
 
@@ -157,27 +162,35 @@ This is the most easily confused decision when deriving a template.
 |---|---|---|---|
 | Output pages | 5 (cover / chapter / TOC / content / ending) | one variant per visually distinct cluster — count driven by the source | one page per source slide (1:1) |
 | Abstraction | High — clean, reusable skeleton | Medium — clusters preserved with cleanup | **Zero** — verbatim copy |
-| Placeholders inserted? | Yes (`{{TITLE}}`, `{{CONTENT_AREA}}`, …) | Yes | **No** — Executor edits text in place against the project content |
+| Authoring placeholders | Yes (`{{TITLE}}`, `{{CONTENT_AREA}}`, …) | Yes | Literal text may remain, but imported native content slots still carry semantic metadata |
 | Best for | You want "tone + basic skeleton" to generate brand-new decks later | The source PPTX itself is a customized layout library and every variant matters | Someone else's polished deck is great as-is, you want every page available as a reference |
 | Typical use | Building a base brand template | Replicating a 20-variant government briefing layout set | Reusing a 50-page McKinsey-style deck verbatim |
 | Requires PPTX source? | No | **Yes** | **Yes** |
-| Decoration complexity | Usually simpler | Must preserve sprite-sheet (cropped image) structure | Inherits whatever the source had, byte-for-byte |
+| Decoration complexity | Usually simpler | Must preserve sprite-sheet crop structure | Preserves literal geometry while adding explicit layer ownership |
 
 **About sprite sheets**: PPTX-exported assets are often a single large image referenced from multiple slides, each cropping a different region via nested `<svg viewBox=...>` wrappers. In `fidelity` and `mirror` modes this nesting must be preserved — you cannot flatten it to a bare `<image>`, or the crop is lost and the page misaligns. The workflow validates this automatically.
 
-**How mirror is consumed**: a mirror template carries no `{{}}` placeholders, so the Strategist picks one mirror page per project page (using `design_spec.md §V Page Roster` descriptions to match content), and the Executor copies that mirror SVG and edits the text in place against the project content — preserving all decoration, sprite crops, and geometry. The library asset stays 100% verbatim; per-project edits live in `projects/<project>/svg_output/`.
+**How mirror is consumed**: the Strategist picks one mirror page per project page, and the Executor copies that complete SVG and edits visible text in place while preserving decoration, sprite crops, geometry, and every `data-pptx-*` structure declaration.
 
-### Step 4 — Registration and discovery
+### Step 4 — Validation, registration, and discovery
 
-After generation, the workflow:
+After generation, both scopes run [`svg_quality_checker.py`](../skills/ppt-master/scripts/svg_quality_checker.py) as a hard gate. What happens next depends on the confirmed output scope:
 
-1. Runs [`svg_quality_checker.py`](../skills/ppt-master/scripts/svg_quality_checker.py) (hard gate — no entry without passing)
-2. Registers the template ID in [`layouts_index.json`](../skills/ppt-master/templates/layouts/layouts_index.json)
-3. Syncs the table in [`templates/layouts/README.md`](../skills/ppt-master/templates/layouts/README.md)
+| Scope | Output | Discovery behavior |
+|---|---|---|
+| `library` (default) | `skills/ppt-master/templates/<kind>/<id>/` | Register in the matching `layouts_index.json` or `decks_index.json` after validation |
+| `project` | Direct `<project>/templates/` bundle; bitmaps in `<project>/images/`; extracted icons in both `<project>/templates/icons/` and `<project>/icons/` | Skip every global index and library README update |
 
-Registration makes the template **discoverable** — when someone asks "what templates are available?", the AI lists it from the index. To use it in a new project, follow the SKILL.md Step 3 rule: name its directory path in your first message, e.g. `use this template: skills/ppt-master/templates/layouts/<your_template_id>/`.
+Library registration makes the template **discoverable** — when someone asks "what templates are available?", the AI lists it from the index. To use it in a new project, follow the SKILL.md Step 3 rule: name its directory path in your first message, e.g. `use this template: skills/ppt-master/templates/layouts/<your_template_id>/`. A project-scoped template is intentionally private to that project and is consumed in place through the explicit `<project>/templates/` path.
+
+When a deck/layout template is selected, the Strategist confirmation stage asks how it should be used:
+
+- **adaptive** — choose one template SVG per page; when no Layout fits, keep the same Master and create a new explicit Layout
+- **strict** — choose one template SVG per page and keep its Master/Layout/Placeholder contract unchanged
 
 ### What a derived template looks like
+
+Library scope (the default) remains a self-contained package:
 
 ```
 skills/ppt-master/templates/layouts/<your_template_id>/
@@ -194,7 +207,7 @@ skills/ppt-master/templates/layouts/<your_template_id>/
 
 `standard` and `fidelity` SVGs use a unified placeholder convention (`{{TITLE}}`, `{{CHAPTER_TITLE}}`, `{{PAGE_TITLE}}`, `{{CONTENT_AREA}}`, ...) that the Strategist phase fills with content.
 
-A `mirror` template emits one SVG per source slide, named by source order, with **no** placeholders inside:
+A `mirror` template emits one SVG per source slide, named by source order. It may keep literal example text instead of `{{...}}` markers, but imported native slots still carry semantic metadata:
 
 ```
 skills/ppt-master/templates/layouts/<your_template_id>/
@@ -209,14 +222,31 @@ skills/ppt-master/templates/layouts/<your_template_id>/
 └── *.png / *.jpg
 ```
 
+Project scope writes a thin bundle directly into the initialized project's existing roots. It does not create `<project>/templates/<template_id>/`:
+
+```
+projects/<project>/
+├── templates/
+│   ├── design_spec.md
+│   ├── 01_cover.svg
+│   ├── 02_chapter.svg
+│   ├── 03_content.svg
+│   ├── 04_ending.svg
+│   └── icons/             # package/validation copy
+├── images/
+│   └── *.png / *.jpg      # SVG references use ../images/<name>
+└── icons/
+    └── *.svg              # runtime copy of extracted icons
+```
+
 ### Project-level customization vs global template
 
-Don't confuse the two:
+Choose the output scope according to ownership:
 
-- **Derive a new template** = enter the global library at `skills/ppt-master/templates/layouts/`, available to all future projects
-- **Project-level customization** = edit only the SVGs under `projects/<project>/templates/` for this one deck; not registered, no impact elsewhere
+- **Library scope (`library`, default)** = enter `skills/ppt-master/templates/<kind>/<id>/`, register globally, and make the package available to future projects
+- **Project scope (`project`)** = create the same validated template contract directly under `projects/<project>/templates/`, keep its runtime images/icons beside that project, and skip global registration
 
-`/create-template` is for the former. For the latter, just edit the SVGs in the project directory directly — no workflow needed.
+`/create-template` supports both. Project scope is the safe route when the template exists only to drive the current deck; it still gets the normal brief, explicit Master/Layout metadata, and template validation without polluting the global library. Choose library scope when another project must consume the result.
 
 ---
 
@@ -224,7 +254,7 @@ Don't confuse the two:
 
 Common misconceptions to avoid:
 
-- **A template is not a PowerPoint Slide Master.** PPT Master outputs native DrawingML shapes and does not depend on the PowerPoint master mechanism. The template is an SVG skeleton, translated to PPTX shapes at export time
+- **A reusable template is a complete SVG reconstruction contract, not a preserved source package.** Every page previews independently, while explicit metadata lets export restore Master/Layout/Slide structure
 - **A template is not a "style skin".** It bundles structure (which blocks per page, how information is hierarchized) with style (colors, fonts, decoration). Trying to swap "skin" without structure tends to put the information architecture and the visuals at odds
 - **A template does not make content decisions for you.** The Strategist still decides per-page which layout to use and whether to extend a variant. Templates offer candidates, not predetermined results
 - **`fidelity` mode is not pixel-perfect copying.** Even with `literal` fidelity, the AI still strips noise and unnecessary repetition — geometry stays, redundancy goes

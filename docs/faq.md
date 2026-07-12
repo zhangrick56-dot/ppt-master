@@ -75,11 +75,13 @@ Be clear on what this buys you: **web search only finds *a* relevant, downloadab
 
 ## Q: Can I edit the generated presentations?
 
-Yes. The main `.pptx` (native PowerPoint shapes — all text, graphics, and colors directly editable without any conversion) is saved to `exports/` with a timestamp. A copy of `svg_output/` (the Executor's raw SVG source) is always written to `backup/<timestamp>/svg_output/` so you can rebuild via `finalize_svg → svg_to_pptx` without re-running the LLM. Pass `--svg-snapshot` to additionally emit an SVG-image preview pptx alongside the native pptx in `exports/` — handy for cross-platform distribution as a single file; off by default because live preview already serves as the SVG visual reference for day-to-day work. Requires **Office 2016** or later.
+Yes. The only PPTX export route in the SVG pipeline is PPT Master's own `svg_output/` → DrawingML conversion. It saves a timestamped native PowerPoint deck to `exports/`, with text, graphics, and colors directly editable as PowerPoint objects. A copy of `svg_output/` (the Executor's raw SVG source) is always written to `backup/<timestamp>/svg_output/` so you can rebuild via `finalize_svg → svg_to_pptx` without re-running the LLM.
+
+`finalize_svg.py` remains a mandatory Step 7 operation even though native PPTX export reads `svg_output/`. It produces self-contained files in `svg_final/` for visual inspection and for manual insertion into another deck as SVG pictures. PowerPoint's manual **Convert to Shape** command is not a supported round-trip path; use the generated native PPTX when you need editable shapes.
 
 ## Q: Why is one paragraph split into multiple text boxes? Can I get one text box per paragraph instead?
 
-By default, mergeable body-text paragraphs export as one editable PowerPoint text frame with multiple paragraphs. Resizing the box reflows text inside it.
+By default, mergeable body text exports as one editable PowerPoint text frame. Authored SVG visual lines remain hard line breaks inside that frame; larger gaps and list items remain separate paragraphs. Only text explicitly marked with `data-pptx-break="soft"` joins authored rows during export — the Executor declares that marker on flowing body prose at draw time, so ordinary paragraphs edit as one reflowing paragraph while deliberately designed line breaks (titles, verse, aligned labels) stay hard breaks. The frame still uses normal PowerPoint wrapping, so deleting a hard break or editing the text reflows it within the frame.
 
 If you need strict line-layout fidelity, re-export with `--no-merge`:
 
@@ -89,7 +91,7 @@ python3 skills/ppt-master/scripts/svg_to_pptx.py <project_path> --no-merge
 
 With `--no-merge`, every visual line becomes its own PowerPoint text frame. This preserves the SVG's exact line layout pixel-for-pixel, which matters for covers, charts, tables, and any page with tight typographic alignment.
 
-**Trade-off**: default paragraph merging lets PowerPoint wrap merged paragraphs to a different line count than the SVG source. Best for long-form body text (abstracts, multi-paragraph sections, reference lists); use `--no-merge` for layout-tight pages. The detection is conservative — mixed-layout `<text>` falls through to the per-line path automatically.
+**Trade-off**: default merging keeps one editable frame and preserves authored line boundaries. Use `--no-merge` only when every visual line must also remain an independently movable text box. The detection is conservative — mixed-layout `<text>` falls through to the per-line path automatically.
 
 When you're chatting with the AI, you can also just ask for strict line fidelity on layout-sensitive pages — the AI will add `--no-merge` when re-exporting.
 
@@ -238,9 +240,9 @@ Want to turn a PPT you love into a reusable template for PPT Master? Here's how:
 
 **Step 1 — Prepare Reference Material**
 
-The simplest path is still to prepare screenshots of the key page types from your reference PPT — cover page, table of contents, chapter divider, content page, and closing page. Save them as images in a single folder with clear, descriptive filenames (e.g., `cover.png`, `toc.png`, `chapter.png`, `content.png`, `closing.png`).
+The recommended input is the original `.pptx`. PPT Master extracts theme identity, every Master/Layout, placeholder metadata, and reusable assets, then rebuilds one clean Master plus semantic Layouts as complete, explicitly annotated SVG pages. When that template is used, `adaptive` may create a new explicit Layout under the same Master; `strict` keeps the selected Layout contract unchanged. Both routes reconstruct native structure from the SVGs.
 
-If you already have the original `.pptx` template file, you can also provide it as a reference source. PPT Master can extract reusable background images, logos, theme colors, and font metadata from the PPTX first, then use those assets during template reconstruction.
+If no source PPTX exists, screenshots of the key page types still work — cover, TOC, chapter, content, and closing — but geometry, fonts, and inheritance must then be inferred visually.
 
 **Step 2 — Let AI Create the Template**
 
@@ -250,12 +252,13 @@ Use an AI coding agent (Claude Code, Codex, etc.) and ask it to use the **PPT Ma
 - Desired tone and color palette (e.g., "modern and restrained, dark blue primary")
 - Category preference (`brand` / `general` / `scenario` / `government` / `special`)
 - Canvas format, if not the default 16:9
+- Output scope: indexed `library` (default) or one already initialized `project`
 
-You don't need to supply every detail upfront — the AI agent will ask follow-up questions to fill in anything missing (template ID, theme mode, etc.).
+You don't need to supply every detail upfront — the AI agent will ask follow-up questions to fill in anything missing (output scope, template ID, theme mode, etc.).
 
 **Step 3 — Wait for the Result**
 
-The AI agent will handle the rest — analyzing your screenshots, building the layout definitions, and registering the template so it appears as a selectable option in the PPT Master workflow.
+The AI agent will handle the rest — analyzing your screenshots, building the layout definitions, and validating the template. Library scope registers it so it appears in global discovery. Project scope writes the thin bundle directly into that project's `templates/` root and deliberately skips global registration.
 
 > **Tip**: The more specific you are about the style and use case, the better the generated template will match your expectations.
 
